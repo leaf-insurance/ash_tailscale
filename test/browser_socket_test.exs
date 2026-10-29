@@ -60,6 +60,13 @@ defmodule AshTailscale.BrowserSocketTest do
     {token, cookie, response} = session(socket)
     assert response.status == 200
     assert response.body =~ ~s(name="_csrf_token")
+
+    assert header(response, "content-security-policy") ==
+             "base-uri 'self'; frame-ancestors 'self';"
+
+    assert header(response, "x-content-type-options") == "nosniff"
+    assert header(response, "referrer-policy") == "strict-origin-when-cross-origin"
+    assert header(response, "x-permitted-cross-domain-policies") == "none"
     set_cookie = header(response, "set-cookie")
     assert String.starts_with?(set_cookie, "__Host-tailscale_example=")
     assert set_cookie =~ "; path=/;"
