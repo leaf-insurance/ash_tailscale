@@ -17,7 +17,7 @@ defmodule AshTailscale.MixProject do
       ],
       docs: [
         main: "readme",
-        source_ref: "main",
+        source_ref: System.get_env("ASH_TAILSCALE_SOURCE_REF", "main"),
         extras: ["README.md", "docs/deployment.md"]
       ],
       elixir: "~> 1.18",

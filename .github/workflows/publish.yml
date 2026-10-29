@@ -1,0 +1,59 @@
+name: Publish to Hex
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hex-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish validated release
+    needs: checks
+    runs-on: ubuntu-24.04
+    # Configure required reviewers and HEX_API_KEY on this environment first.
+    environment: hex-publish
+    env:
+      MIX_ENV: dev
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@e6d7c94229049569db56a7ad5a540c051a010af9 # v1.20.4
+        with:
+          elixir-version: "1.18.4"
+          otp-version: "28.5.0.3"
+      - name: Require exact tag/version match
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          elixir -e '
+            Mix.start()
+            Code.require_file("mix.exs")
+            expected = "v" <> Mix.Project.config()[:version]
+            actual = System.fetch_env!("RELEASE_TAG")
+            if actual != expected, do: raise("Expected tag #{expected}, got #{actual}")
+          '
+      - name: Fetch locked dependencies
+        run: mix deps.get --check-locked
+      - name: Compile dependencies
+        run: mix deps.compile
+      - name: Compile project
+        run: mix compile --warnings-as-errors
+      - name: Build release docs with real tag source links
+        env:
+          ASH_TAILSCALE_SOURCE_REF: ${{ github.ref_name }}
+        run: mix docs --warnings-as-errors
+      - name: Publish package and docs
+        env:
+          ASH_TAILSCALE_SOURCE_REF: ${{ github.ref_name }}
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+        run: mix hex.publish --yes
