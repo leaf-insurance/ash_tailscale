@@ -18,7 +18,7 @@ defmodule AshTailscale.Example.Reports do
   use Ash.Domain, validate_config_inclusion?: false
 
   resources do
-    resource(AshTailscale.Example.Report)
+    resource AshTailscale.Example.Report
   end
 end
 
@@ -30,31 +30,27 @@ defmodule AshTailscale.Example.Report do
 
   # Example application data only; never an identity store.
   ets do
-    private?(true)
+    private? true
   end
 
   attributes do
-    uuid_primary_key(:id)
-    attribute(:title, :string, public?: true, allow_nil?: false)
+    uuid_primary_key :id
+    attribute :title, :string, public?: true, allow_nil?: false
   end
 
   actions do
-    defaults([:read, :destroy, create: [:title], update: [:title]])
+    defaults [:read, :destroy, create: [:title], update: [:title]]
   end
 
   policies do
     policy action_type(:read) do
-      authorize_if(
-        {AshTailscale.CapabilityCheck,
-         predicate: {AshTailscale.Example.Capabilities, :allowed?, ["read"]}}
-      )
+      authorize_if {AshTailscale.CapabilityCheck,
+                    predicate: {AshTailscale.Example.Capabilities, :allowed?, ["read"]}}
     end
 
     policy action_type([:create, :update, :destroy]) do
-      authorize_if(
-        {AshTailscale.CapabilityCheck,
-         predicate: {AshTailscale.Example.Capabilities, :allowed?, ["write"]}}
-      )
+      authorize_if {AshTailscale.CapabilityCheck,
+                    predicate: {AshTailscale.Example.Capabilities, :allowed?, ["write"]}}
     end
   end
 end

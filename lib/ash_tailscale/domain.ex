@@ -3,6 +3,6 @@ defmodule AshTailscale.Domain do
   use Ash.Domain, validate_config_inclusion?: false
 
   resources do
-    resource(AshTailscale.User)
+    resource AshTailscale.User
   end
 end

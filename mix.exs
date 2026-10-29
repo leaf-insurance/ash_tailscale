@@ -31,10 +31,11 @@ defmodule AshTailscale.MixProject do
       {:ash_authentication, "~> 4.15.0"},
       {:jason, "~> 1.4"},
       {:plug, "~> 1.18"},
-      {:phoenix, "~> 1.8.16", only: :test},
+      {:phoenix, "~> 1.8.16", only: [:dev, :test]},
       {:phoenix_html, "~> 4.3.0", only: :test},
       {:bandit, "~> 1.14.1", only: :test},
-      {:simple_sat, "~> 0.1.4", only: :test}
+      {:simple_sat, "~> 0.1.4", only: :test},
+      {:sourceror, "~> 1.13", only: [:dev, :test], runtime: false}
     ]
   end
 end

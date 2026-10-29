@@ -10,22 +10,22 @@ defmodule AshTailscale.User do
 
   authentication do
     strategies do
-      tailscale(:tailscale)
+      tailscale :tailscale
     end
   end
 
   attributes do
-    attribute(:login, :string, primary_key?: true, allow_nil?: false, public?: true)
-    attribute(:name, :string, public?: true)
-    attribute(:profile_pic, :string, public?: true)
-    attribute(:capabilities, :map, allow_nil?: false, default: %{}, public?: true)
+    attribute :login, :string, primary_key?: true, allow_nil?: false, public?: true
+    attribute :name, :string, public?: true
+    attribute :profile_pic, :string, public?: true
+    attribute :capabilities, :map, allow_nil?: false, default: %{}, public?: true
   end
 
   actions do
     read :get_by_subject do
-      get?(true)
-      argument(:subject, :string)
-      prepare(AshTailscale.NoSubjectReload)
+      get? true
+      argument :subject, :string
+      prepare AshTailscale.NoSubjectReload
     end
   end
 end
