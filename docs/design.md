@@ -1,10 +1,13 @@
 # AshTailscale: v0.1 design
 
-Status: implemented and locally tested, not published or release-ready.
+Status: implemented; 34 agent-run automated tests and local socket checks passed.
+The user subsequently reported passing the agreed manual live Serve/tailnet smoke
+checklist for their own setup; agents did not directly observe that deployment.
+No package publication, release tag or broader production-readiness guarantee.
 Research and stable dependency compatibility checked 2026-10-29. The approved
-scope below is unchanged; API examples now reflect the working implementation.
-See [deployment and validation](deployment.md) for exact versions, socket recipe,
-byte bounds, and the outstanding real-tailnet release gate.
+scope below is unchanged; API examples reflect the working implementation.
+See [deployment and validation](deployment.md) for agent-tested versions, socket
+recipe, byte bounds, user-reported live results and remaining coverage limits.
 
 ## Goal
 
@@ -73,9 +76,10 @@ or another proxy to the backend. A trusted host remains part of the boundary.
 
 The compatibility spike tested Phoenix with Bandit over a local Unix socket,
 including socket creation, private permissions, and controlled stop/cleanup/restart.
-The real Serve → Unix-socket leg still requires an approved tailnet smoke test
-before release. [The tested local configuration and gap](deployment.md) are
-published rather than a matrix of alternatives.
+The user later reported successful live Serve/Unix-socket checks, including
+isolation and restart. [Local evidence, reported live results and limitations](deployment.md)
+are documented separately, rather than claimed as a platform/version matrix.
+New deployments must repeat the smoke checks.
 
 Use a capability namespace under a domain you control. A sample tailnet policy
 fragment, assuming the group and destination tag are defined:
@@ -257,7 +261,7 @@ capability-only callers can be a separate follow-up; do not fabricate a user.
    Path=/ and no Domain. Ordinary SameSite=Lax/host-only cookies do not prevent a
    sibling tailnet host from tossing a domain cookie containing an attacker's
    valid CSRF session/token, while Serve attaches the victim's ambient identity.
-   See [browser protections and the browser smoke-test gap](deployment.md#browser-protections).
+   See [browser protections and the scope of reported browser checks](deployment.md#browser-protections).
    Require Phoenix's
    standard CSRF protection on every authenticated browser route, including JSON
    writes; a normal unprotected `:api` pipeline is not supported.
@@ -305,8 +309,9 @@ cookie-only fallback now, and do not claim immediate socket policy revocation.
 
 1. **Compatibility/local topology:** non-persisted resource/domain and strategy
    work with stable Ash Authentication. Bandit/Phoenix serve HTTP over a private
-   Unix socket. No fallback topology or identity storage. **Real Serve remains an
-   unpassed release gate**, not a claimed successful spike.
+   Unix socket. No fallback topology or identity storage. The subsequent
+   **user-reported live smoke checklist passed for that setup**; it is distinct
+   from the agents' local spike and not independently observed by agents.
 2. **Headers and actor:** `AshTailscale.from_headers/1` is the shared pure builder;
    RFC 2047/JSON parsing, byte limits, a thin strategy, and required-authentication
    `AshTailscale.Plug` are implemented.
@@ -339,7 +344,13 @@ The implemented slice uses stable Ash **3.37.2**, Ash Authentication **4.15.0**,
 Phoenix **1.8.16** and Bandit **1.14.1**. Ash Authentication Phoenix is not needed.
 The Elixir requirement is `~> 1.18`; tests passed on Elixir **1.18.4 / OTP 28.5.0.3**
 and **1.20.4 / OTP 29.1.1**. See the lockfile and [validation notes](deployment.md).
-Local Phoenix/Unix-socket integration is exercised; real Tailscale Serve is not.
+Those versions describe agent-run local tests. The user later reported successful
+live identity, grant-change, CSRF, header-spoofing, tagged-client rejection,
+socket-isolation/restart and browser cookie-prefix checks. No exact live
+browser/server version matrix was supplied. Cookie checks were not a full two-user
+attack simulation, and the tagged client's native DNS remained unvalidated.
+See [the scoped manual results](deployment.md#user-reported-manual-live-smoke-checks);
+other environments must rerun them.
 
 - [Tailscale Serve: headers and security][serve]
 - [Serve capability-forwarding example][serve-example]

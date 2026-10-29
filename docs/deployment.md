@@ -1,8 +1,10 @@
-# Tested socket recipe and remaining release gate
+# Socket recipe and validation status
 
 ## Compatibility decisions
 
-Stable Hex versions were checked on 2026-10-29; see `mix.lock`:
+Stable Hex versions were checked on 2026-10-29; see `mix.lock`. This is the
+**agent-tested local dependency set**, not a version matrix for the later
+user-reported live deployment:
 
 | Component | Tested version |
 | --- | --- |
@@ -110,9 +112,10 @@ After explicit operator approval to change Serve/network policy:
 tailscale serve --bg --accept-app-caps=example.com/cap/reports unix:/run/my-app/phoenix.sock
 ```
 
-This command is documented, **not executed** by this implementation. Configure
-appropriate network grants and app capabilities. Serve-shaped forwarded JSON
-for the example is:
+Agents documented this command without executing it or modifying host services.
+The operator subsequently reported the live checks below. Configure appropriate
+network grants and app capabilities for your deployment. Serve-shaped forwarded
+JSON for the example is:
 
 ```json
 {"example.com/cap/reports":[{"actions":["read"]},{"actions":["write"]}]}
@@ -146,9 +149,12 @@ the victim's current identity and capabilities.
 
 Supporting browsers reject a `__Host-` cookie with a Domain attribute, without
 Secure, or with a path other than `/`. Keep the exact case-sensitive prefix and
-these attributes. Tests assert the emitted Set-Cookie attributes and normal CSRF
-behavior, **not browser enforcement**: a real-browser sibling-host cookie-tossing
-smoke test is still required before release. No custom origin validator is added.
+these attributes. Automated tests assert the emitted Set-Cookie attributes and
+normal CSRF behavior, not browser enforcement. The user subsequently reported a
+successful sibling-host browser check of prefix enforcement and application-cookie
+configuration; this was **not a full two-user privilege-escalation simulation**.
+See [the reported results and limits](#user-reported-manual-live-smoke-checks).
+No custom origin validator is added.
 
 The GET page delivers a normal Phoenix/Plug CSRF token. Forms submit
 `_csrf_token`; JSON clients send `x-csrf-token` with the same session cookie.
@@ -203,7 +209,7 @@ capability limit plus header name; larger headers receive HTTP 431 before the
 plug. Q encoding can expand data substantially. The example disables backend
 HTTP/2. These are bounds, not a capability schema or key allowlist.
 
-## Validation commands
+## Agent-run automated and local validation
 
 ```sh
 mix deps.get
@@ -217,8 +223,9 @@ mix hex.audit
 go run test/fixtures/generate.go > test/fixtures/go_q.json
 ```
 
-The tests exercise real Ash create/read/update/destroy authorization, a consumer
-row-filter alternative returning an empty list, parser/byte-bound failures,
+The 34 agent-run automated tests exercise real Ash create/read/update/destroy
+authorization, a consumer row-filter alternative returning an empty list,
+parser/byte-bound failures,
 Go Q multiword fixtures, actor isolation, subject reload rejection, literal-true
 predicate handling, and real HTTP form/JSON CSRF rejection/success on a Unix socket.
 They never connect to tailscaled. **34 tests pass on both tested toolchains**;
@@ -231,8 +238,9 @@ Path=/, Secure and absence of Domain over HTTP; it did not exercise a browser.
 This was local-only, not a Serve test. Launcher preflight tests cover owned 0700
 directories, wrong modes, symlinks, and rejection based on a foreign-owned 0700
 `/root` directory's metadata (read-only; the latter test skips where that fixture
-is unavailable). No privileged launch, ownership changes, cross-user connection
-probe or daemon permission test was performed.
+is unavailable). Agents performed no privileged launch, ownership changes,
+cross-user connection probe or daemon permission test; the later operator-reported
+socket isolation checks are recorded separately below.
 
 Dependency compilation can emit upstream
 warnings (notably optional Igniter calls in Ash and Elixir 1.20 deprecations);
@@ -243,22 +251,48 @@ clean generated rebar dependency artifacts if necessary. A first alternate
 toolchain attempt with a relative build path/shared rebar cache failed compiling
 yamerl; a clean absolute build succeeded.
 
-## NOT PASSED: real-tailnet release gate
+## User-reported manual live smoke checks
 
-The installed Tailscale CLI reports **1.102.5**, but neither Serve configuration,
-grants, tailscaled, nor any host/network service was modified. No real Serve
-request was made. Local socket success is **not** proof of the complete topology.
+**Agreed manual smoke checklist: passed for the user's tested setup, as reported
+by the user.** These later checks ran on the operator's own server/tailnet and were
+not directly observed by the implementation or orchestration agents. No exact
+browser/server version matrix was supplied.
 
-Before release, obtain approval and test on the intended deployment:
-- actual Serve HTTPS → HTTP Unix target, forwarded scheme, daemon socket access;
-- unauthorized local OS identities cannot connect, and no TCP backend exists;
-- caller-supplied spoofed identity/capability headers are stripped/replaced by Serve;
-- a human-owned tailnet client receives the expected actor and current grants;
-- a tagged/login-less client is rejected; shared-device visitor policy is explicit;
-- capability changes take effect on subsequent requests, with no session fallback;
-- real-browser form/JSON CSRF and `__Host-` cookie enforcement at the Serve URL,
-  including attempted cookie tossing from a sibling tailnet host;
-- controlled service stop/cleanup/restart with the real permissions/daemon identity.
+Reported results:
+- **Human identity and current grants:** a browser on a user-owned client
+  authenticated and an Ash create returned the expected real login. Removing
+  write permission yielded 403; restoring it yielded 200 in the **same session**.
+- **CSRF:** submitting without a token yielded 403/`InvalidCSRFTokenError`;
+  normal form submission succeeded.
+- **Header sanitization:** forging `Tailscale-User-Login` still returned the true
+  login. Forging `Tailscale-App-Capabilities` while write permission was removed
+  still yielded 403.
+- **Tagged client:** a separate tagged client granted TCP 443 and read/write
+  capabilities received 401. It had read-only `resolv.conf`/DNS health warnings;
+  the test used `curl --resolve` with the server address and HTTPS hostname,
+  **not `-k`**, retaining TLS certificate verification. Native DNS was neither
+  fixed nor validated.
+- **Socket isolation and restart:** the app OS account connected and received 401
+  without identity headers; an unrelated unprivileged OS account could not
+  connect. With Serve left running, the operator stopped Phoenix, removed the
+  stale socket, restarted it, and successfully submitted from the real browser.
+- **Browser cookie enforcement:** a sibling-host test accepted an ordinary
+  parent-domain control cookie but rejected an attempted `__Host-` cookie with
+  Domain. The actual application cookie was verified as Secure, HttpOnly, Path=/
+  and scoped to the exact hostname. The normal form worked, and the user reported
+  completing all cleanup instructions.
+
+The cookie check validates real-browser prefix enforcement/configuration only,
+**not a complete two-user privilege-escalation attack simulation**. The named
+browser/version matrix, broader server/platform coverage and tagged-client native
+DNS remain gaps. New environments must rerun the smoke checks, including their
+socket/daemon permissions and browser behavior; these reports are not a general
+production-readiness guarantee. No package publication or release tag is implied.
+
+Historically, the agents' local CLI reported Tailscale **1.102.5**, but agents
+made no real Serve requests and did not change tailscaled, Serve, grants or host
+services. The later operator-run live checks above are separate evidence, not
+retroactive claims about agent testing.
 
 LiveView, headless APIs, tagged capability-only principals and session
 authentication are not deferred pieces of this slice: they are unsupported scope.

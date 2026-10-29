@@ -3,9 +3,11 @@
 Transient [Ash Authentication](https://hexdocs.pm/ash_authentication/) actors for
 Phoenix browser applications behind **Tailscale Serve 1.94+**.
 
-**Working v0.1 slice, not published or release-ready:** local Unix-socket,
-Phoenix/CSRF, parser and Ash policy tests pass. The real-tailnet smoke test is
-still a release gate. See [deployment and validation](docs/deployment.md).
+**Working v0.1 slice, not published or release-tagged:** agents ran 34 automated
+tests plus local socket checks. The user subsequently reported passing the agreed
+manual live Serve/tailnet smoke checklist on their own setup; agents did not
+directly observe that deployment. This is not a broader production-readiness or
+platform guarantee. See [validation results and limits](docs/deployment.md#user-reported-manual-live-smoke-checks).
 
 ```text
 Tailnet browser → Serve HTTPS / HTTP proxy → private Unix socket
@@ -176,4 +178,8 @@ The repository's network tests use temporary Unix sockets and a loopback TCP lis
 rejection of accidental TCP configuration, never tailscaled. Go-generated RFC2047
 fixtures are checked in; Go is needed only to regenerate them.
 See [design](docs/design.md) for the security model and
-[deployment](docs/deployment.md) for byte limits, actual commands, and release gates.
+[deployment](docs/deployment.md) for byte limits, commands, and the separate
+user-reported live results. Those checks include browser cookie-prefix enforcement,
+not a full two-user attack simulation. No named browser/server version matrix was
+supplied; the tagged client's native DNS remains unvalidated. New environments
+must rerun the smoke checks.
