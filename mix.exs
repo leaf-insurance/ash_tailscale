@@ -41,6 +41,8 @@ defmodule AshTailscale.MixProject do
       {:phoenix_live_view, "~> 1.2.13", only: [:dev, :test]},
       {:bandit, "~> 1.14.1", only: :test},
       {:simple_sat, "~> 0.1.4", only: :test},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:ash_credo, "== 0.18.0", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40.4", only: :dev, runtime: false},
       {:sourceror, "~> 1.13", only: [:dev, :test], runtime: false}
     ]

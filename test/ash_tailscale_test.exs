@@ -1,11 +1,12 @@
 defmodule AshTailscaleTest do
   use ExUnit.Case, async: true
   doctest AshTailscale
+  alias Ash.DataLayer.Simple
   alias AshAuthentication.Strategy
 
   test "library-owned transient resource and route-less, token-free sign-in" do
     assert Ash.Resource.Info.domain(AshTailscale.User) == AshTailscale.Domain
-    assert Ash.Resource.Info.data_layer(AshTailscale.User) == Ash.DataLayer.Simple
+    assert Ash.Resource.Info.data_layer(AshTailscale.User) == Simple
     assert Ash.Resource.Info.primary_key(AshTailscale.User) == [:login]
     refute AshAuthentication.Info.authentication_tokens_enabled?(AshTailscale.User)
     strategy = AshAuthentication.Info.strategy!(AshTailscale.User, :tailscale)
@@ -39,7 +40,7 @@ defmodule AshTailscaleTest do
     assert {:error, _} =
              AshTailscale.User
              |> Ash.Query.for_read(:get_by_subject, %{subject: subject})
-             |> Ash.DataLayer.Simple.set_data([actor])
+             |> Simple.set_data([actor])
              |> Ash.read(authorize?: false)
   end
 end

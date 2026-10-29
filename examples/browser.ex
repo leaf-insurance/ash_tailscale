@@ -1,7 +1,9 @@
 defmodule AshTailscale.Example.HTML do
+  @moduledoc false
   # Static controller rendering only: no LiveView process, mount, or socket.
   use Phoenix.Component
 
+  @spec index(map()) :: Phoenix.LiveView.Rendered.t()
   def index(assigns) do
     ~H"""
     <meta name="csrf-token" content={@csrf_token} />
@@ -20,14 +22,17 @@ defmodule AshTailscale.Example.HTML do
 end
 
 defmodule AshTailscale.Example.Controller do
+  @moduledoc false
   use Phoenix.Controller, formats: [:html, :json]
 
+  @spec index(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def index(conn, _) do
     conn
     |> put_view(html: AshTailscale.Example.HTML)
     |> render("index.html", csrf_token: Plug.CSRFProtection.get_csrf_token())
   end
 
+  @spec create(Plug.Conn.t(), map()) :: Plug.Conn.t()
   def create(conn, _) do
     actor = Ash.PlugHelpers.get_actor(conn)
 
@@ -57,6 +62,7 @@ defmodule AshTailscale.Example.Router do
 end
 
 defmodule AshTailscale.Example.ErrorHTML do
+  @spec render(String.t(), map() | keyword()) :: String.t()
   def render(template, _), do: Phoenix.Controller.status_message_from_template(template)
 end
 
@@ -87,6 +93,7 @@ defmodule AshTailscale.Example do
   and launch with umask 0077. No TCP listener is configured.
   """
   # Unix-only launcher preflight. id -u reports the effective OS identity.
+  @spec check_directory!(Path.t()) :: :ok
   def check_directory!(path) do
     import Bitwise
     {uid, 0} = System.cmd("id", ["-u"])
@@ -100,6 +107,7 @@ defmodule AshTailscale.Example do
     :ok
   end
 
+  @spec config(Path.t(), String.t(), String.t()) :: keyword()
   def config(socket_path, host, secret_key_base) do
     [
       adapter: Bandit.PhoenixAdapter,

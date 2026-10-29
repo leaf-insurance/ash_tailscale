@@ -1,8 +1,9 @@
 defmodule AshTailscale.BrowserSocketTest do
   use ExUnit.Case, async: false
-  @moduletag capture_log: true
   import Bitwise
   alias AshTailscale.Example.Endpoint
+
+  @moduletag capture_log: true
 
   @secret String.duplicate("test-only-secret-", 4)
   @host "app.example.test"

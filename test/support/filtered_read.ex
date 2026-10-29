@@ -1,4 +1,5 @@
 defmodule AshTailscale.TestDomain do
+  @moduledoc false
   use Ash.Domain, validate_config_inclusion?: false
 
   resources do
@@ -7,6 +8,7 @@ defmodule AshTailscale.TestDomain do
 end
 
 defmodule AshTailscale.FilteredRead do
+  @moduledoc false
   use Ash.Resource,
     domain: AshTailscale.TestDomain,
     data_layer: Ash.DataLayer.Simple,

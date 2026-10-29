@@ -1,7 +1,9 @@
 defmodule AshTailscale.PoliciesTest do
   use ExUnit.Case, async: true
-  @moduletag capture_log: true
+  alias Ash.DataLayer.Simple
   alias AshTailscale.Example.Report
+
+  @moduletag capture_log: true
 
   defp actor(actions) do
     AshTailscale.test_actor!("alice", %{"example.com/cap/reports" => [%{"actions" => actions}]})
@@ -23,7 +25,7 @@ defmodule AshTailscale.PoliciesTest do
     query =
       AshTailscale.FilteredRead
       |> Ash.Query.for_read(:read)
-      |> Ash.DataLayer.Simple.set_data([%AshTailscale.FilteredRead{title: "private"}])
+      |> Simple.set_data([%AshTailscale.FilteredRead{title: "private"}])
 
     assert {:ok, [_]} = Ash.read(query, actor: actor(["read"]))
     assert {:ok, []} = Ash.read(query, actor: actor([]))

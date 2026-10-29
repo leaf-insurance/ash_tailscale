@@ -1,5 +1,7 @@
 defmodule AshTailscale.Example.Capabilities do
+  @moduledoc false
   # This schema belongs only to the example consumer, not to AshTailscale.
+  @spec allowed?(AshTailscale.capabilities(), String.t()) :: boolean()
   def allowed?(caps, action) do
     case caps["example.com/cap/reports"] do
       entries when is_list(entries) ->
@@ -15,6 +17,7 @@ defmodule AshTailscale.Example.Capabilities do
 end
 
 defmodule AshTailscale.Example.Reports do
+  @moduledoc false
   use Ash.Domain, validate_config_inclusion?: false
 
   resources do
@@ -23,6 +26,7 @@ defmodule AshTailscale.Example.Reports do
 end
 
 defmodule AshTailscale.Example.Report do
+  @moduledoc false
   use Ash.Resource,
     domain: AshTailscale.Example.Reports,
     data_layer: Ash.DataLayer.Ets,

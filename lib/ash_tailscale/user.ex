@@ -48,6 +48,7 @@ defmodule AshTailscale.NoSubjectReload do
   @moduledoc false
   use Ash.Resource.Preparation
 
+  @impl true
   def prepare(query, _, _) do
     Ash.Query.add_error(query, "Tailscale authentication requires current request headers")
   end

@@ -2,11 +2,13 @@ defmodule AshTailscale.CapabilityCheckTest do
   use ExUnit.Case, async: true
   alias AshTailscale.CapabilityCheck, as: Check
 
+  @spec echo(AshTailscale.capabilities(), pid(), term()) :: term()
   def echo(caps, pid, value) do
     send(pid, {:called, caps})
     value
   end
 
+  @spec fail(AshTailscale.capabilities(), :raise | :throw | :exit) :: no_return()
   def fail(_, :raise), do: raise("predicate failure")
   def fail(_, :throw), do: throw(:failure)
   def fail(_, :exit), do: exit(:failure)
