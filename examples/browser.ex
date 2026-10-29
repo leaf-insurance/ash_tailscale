@@ -1,16 +1,31 @@
+defmodule AshTailscale.Example.HTML do
+  # Static controller rendering only: no LiveView process, mount, or socket.
+  use Phoenix.Component
+
+  def index(assigns) do
+    ~H"""
+    <meta name="csrf-token" content={@csrf_token} />
+    <p>
+      Signed in as: {if @current_user.name && @current_user.name != @current_user.login,
+        do: "#{@current_user.name} (#{@current_user.login})",
+        else: @current_user.login}
+    </p>
+    <h2>Write-permission / CSRF demo</h2>
+    <form method="post" action="/form">
+      <input type="hidden" name="_csrf_token" value={@csrf_token} />
+      <button>Create report</button>
+    </form>
+    """
+  end
+end
+
 defmodule AshTailscale.Example.Controller do
   use Phoenix.Controller, formats: [:html, :json]
 
   def index(conn, _) do
-    token = Plug.CSRFProtection.get_csrf_token()
-
-    html(conn, """
-    <meta name="csrf-token" content="#{token}">
-    <form method="post" action="/form">
-      <input type="hidden" name="_csrf_token" value="#{token}">
-      <button>Submit</button>
-    </form>
-    """)
+    conn
+    |> put_view(html: AshTailscale.Example.HTML)
+    |> render("index.html", csrf_token: Plug.CSRFProtection.get_csrf_token())
   end
 
   def create(conn, _) do

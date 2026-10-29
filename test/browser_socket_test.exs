@@ -54,6 +54,54 @@ defmodule AshTailscale.BrowserSocketTest do
     assert request(ctx.socket, "GET", "/").status == 200
   end
 
+  test "initial GET shows the current identity without requiring a write or submission", %{
+    socket: socket
+  } do
+    for {name, expected} <- [
+          {nil, "alice"},
+          {"", "alice"},
+          {"alice", "alice"},
+          {"Alice Example", "Alice Example (alice)"}
+        ] do
+      response =
+        request(socket, "GET", "/", [
+          {"tailscale-user-name", name},
+          {"tailscale-app-capabilities", "{}"}
+        ])
+
+      assert response.status == 200
+      assert response.body =~ ~r/<p>\s*Signed in as: #{Regex.escape(expected)}\s*<\/p>/
+      assert response.body =~ "Write-permission / CSRF demo"
+      assert response.body =~ ~s(<form method="post" action="/form">)
+    end
+  end
+
+  test "GET escapes untrusted display name and login, including the login fallback", %{
+    socket: socket
+  } do
+    login = "<img src=x onerror=alert(1)>"
+    escaped_login = "&lt;img src=x onerror=alert(1)&gt;"
+
+    response =
+      request(socket, "GET", "/", [
+        {"tailscale-user-login", login},
+        {"tailscale-user-name", ~s(<b>"Alice" & Co</b>)}
+      ])
+
+    assert response.status == 200
+
+    expected = "&lt;b&gt;&quot;Alice&quot; &amp; Co&lt;/b&gt; (#{escaped_login})"
+    assert response.body =~ ~r/<p>\s*Signed in as: #{Regex.escape(expected)}\s*<\/p>/
+
+    refute response.body =~ "<img"
+    refute response.body =~ "<b>"
+
+    fallback = request(socket, "GET", "/", [{"tailscale-user-login", login}])
+    assert fallback.status == 200
+    assert fallback.body =~ ~r/<p>\s*Signed in as: #{Regex.escape(escaped_login)}\s*<\/p>/
+    refute fallback.body =~ "<img"
+  end
+
   test "HTML delivers CSRF token and a secure UI-only session; forms enforce CSRF", %{
     socket: socket
   } do
