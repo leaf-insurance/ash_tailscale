@@ -1,7 +1,12 @@
 defmodule AshTailscale.Strategy do
   @moduledoc """
-  Route-less, token-free Ash Authentication strategy used by the library resource.
-  Its only operation is server-side sign-in with an internal header assertion.
+  Library-owned, route-less and token-free Ash Authentication integration.
+
+  This strategy is already attached to `AshTailscale.User`. Consumers use
+  `AshTailscale.Plug`; they should not attach this extension to their own users.
+  This is not a general custom-user DSL API. Its sole server-side sign-in operation
+  uses internal adapter input, never public request parameters. No routes, tokens
+  or session identity are provided.
   """
   defstruct name: :tailscale, resource: nil, __spark_metadata__: nil
 
