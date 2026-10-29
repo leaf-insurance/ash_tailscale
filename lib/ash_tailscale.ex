@@ -1,13 +1,51 @@
 defmodule AshTailscale do
   @moduledoc """
-  Request-scoped Tailscale actors. These functions parse assertions, not credentials:
-  callers must establish the private Unix-socket / Serve HTTP proxy boundary.
+  Builds transient Ash actors from Tailscale Serve header assertions.
+
+  Phoenix applications normally use `AshTailscale.Plug` after session/CSRF
+  protection. These lower-level functions are pure: they do not inspect a socket,
+  verify a signature, or establish trust. Callers must establish the private
+  Unix-socket / Serve HTTP proxy boundary themselves.
+
+  The library supplies `AshTailscale.User` and its domain; no user resource
+  configuration, persistence, lookup, authentication tokens or session identity
+  are needed. Capabilities remain opaque JSON for consumer policy predicates.
+  Never serialize/cache an actor as fresh authority for a later request or job.
   """
 
+  @typedoc "Plug-style header pairs; assertion names are case-insensitive."
+  @type headers :: [{String.t(), String.t()}]
+
+  @typedoc "A decoded JSON value; the library imposes no nested capability schema."
+  @type json_value ::
+          nil
+          | boolean()
+          | number()
+          | String.t()
+          | [json_value()]
+          | %{optional(String.t()) => json_value()}
+
+  @typedoc "The complete decoded capability object forwarded for one request."
+  @type capabilities :: %{optional(String.t()) => json_value()}
+
   @doc """
-  Pure header-to-actor builder. Accepts a Plug-style list of header pairs.
-  Never pass browser parameters here or expose this as a public sign-in action.
+  Parses headers into a fresh actor, or returns `{:error, :invalid_headers}`.
+
+  Login is required and preserved as supplied. Missing capability headers produce
+  an empty map; present capability JSON must be an object. UTF-8 RFC2047 Q/B
+  decoding and byte limits apply. Optional display decoding failures become nil,
+  but byte-limit violations reject the assertion.
+
+  This is **not credential validation**. Never pass browser parameters here or
+  expose it as a public sign-in action; use the plug at the supported boundary.
+
+      iex> {:ok, actor} = AshTailscale.from_headers([{"tailscale-user-login", "alice@example.com"}])
+      iex> {actor.login, actor.capabilities}
+      {"alice@example.com", %{}}
+      iex> AshTailscale.from_headers([])
+      {:error, :invalid_headers}
   """
+  @spec from_headers(headers()) :: {:ok, AshTailscale.User.t()} | {:error, :invalid_headers}
   def from_headers(headers) do
     with {:ok, attrs} <- AshTailscale.Headers.parse(headers) do
       {:ok,
@@ -17,7 +55,19 @@ defmodule AshTailscale do
     end
   end
 
-  @doc "Whether an actor was built by this library. Not cryptographic proof or a freshness check."
+  @doc """
+  Recognizes the library actor shape and provenance marker.
+
+  Returns false for nil/unrelated/unmarked actors. The marker is not cryptographic
+  proof, a freshness check, or protection against trusted application code forging
+  or restoring a serialized struct.
+
+      iex> AshTailscale.actor?(nil)
+      false
+      iex> AshTailscale.actor?(AshTailscale.test_actor!("alice@example.com"))
+      true
+  """
+  @spec actor?(term()) :: boolean()
   def actor?(%AshTailscale.User{login: login, capabilities: caps} = actor)
       when is_binary(login) and byte_size(login) > 0 and is_map(caps) do
     Ash.Resource.get_metadata(actor, :ash_tailscale) == :request_headers
@@ -26,9 +76,18 @@ defmodule AshTailscale do
   def actor?(_), do: false
 
   @doc """
-  Construct an actor for policy tests without a proxy. Do not use as a production
-  authentication bypass. Capabilities are round-tripped through the same parser.
+  Constructs an actor for policy tests without a proxy.
+
+  Accepts a login and JSON capability map (default `%{}`), round-tripping through
+  the same parser. Raises on invalid input or byte-limit violations. This helper
+  does not establish transport/proxy trust and is **not a production bypass**.
+
+      iex> caps = %{"example.com/cap/reports" => [%{"actions" => ["read"]}]}
+      iex> actor = AshTailscale.test_actor!("alice@example.com", caps)
+      iex> actor.capabilities == caps
+      true
   """
+  @spec test_actor!(String.t(), capabilities()) :: AshTailscale.User.t()
   def test_actor!(login, capabilities \\ %{}) do
     {:ok, actor} =
       from_headers([

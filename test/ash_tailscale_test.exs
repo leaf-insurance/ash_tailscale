@@ -1,5 +1,6 @@
 defmodule AshTailscaleTest do
   use ExUnit.Case, async: true
+  doctest AshTailscale
   alias AshAuthentication.Strategy
 
   test "library-owned transient resource and route-less, token-free sign-in" do
