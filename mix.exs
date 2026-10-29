@@ -5,6 +5,16 @@ defmodule AshTailscale.MixProject do
     [
       app: :ash_tailscale,
       version: "0.1.0",
+      name: "AshTailscale",
+      description:
+        "Transient Tailscale Serve actors and capability checks for Ash browser applications.",
+      source_url: "https://github.com/leaf-insurance/ash_tailscale",
+      homepage_url: "https://github.com/leaf-insurance/ash_tailscale",
+      package: [
+        files: ~w(lib config examples docs mix.exs README.md LICENSE .formatter.exs),
+        licenses: ["MIT"],
+        links: %{"GitHub" => "https://github.com/leaf-insurance/ash_tailscale"}
+      ],
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       elixirc_paths:
