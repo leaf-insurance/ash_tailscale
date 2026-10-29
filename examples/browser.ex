@@ -1,0 +1,103 @@
+defmodule AshTailscale.Example.Controller do
+  use Phoenix.Controller, formats: [:html, :json]
+
+  def index(conn, _) do
+    token = Plug.CSRFProtection.get_csrf_token()
+
+    html(conn, """
+    <meta name="csrf-token" content="#{token}">
+    <form method="post" action="/form">
+      <input type="hidden" name="_csrf_token" value="#{token}">
+      <button>Submit</button>
+    </form>
+    """)
+  end
+
+  def create(conn, _) do
+    actor = Ash.PlugHelpers.get_actor(conn)
+
+    case Ash.create(AshTailscale.Example.Report, %{title: "Browser submission"}, actor: actor) do
+      {:ok, report} -> json(conn, %{id: report.id, login: actor.login})
+      {:error, _} -> conn |> put_status(:forbidden) |> json(%{error: "Forbidden"})
+    end
+  end
+end
+
+defmodule AshTailscale.Example.Router do
+  use Phoenix.Router
+
+  pipeline :browser do
+    plug(:fetch_session)
+    plug(:protect_from_forgery)
+    plug(AshTailscale.Plug)
+  end
+
+  scope "/" do
+    pipe_through(:browser)
+    get("/", AshTailscale.Example.Controller, :index)
+    post("/form", AshTailscale.Example.Controller, :create)
+    post("/json", AshTailscale.Example.Controller, :create)
+  end
+end
+
+defmodule AshTailscale.Example.ErrorHTML do
+  def render(template, _), do: Phoenix.Controller.status_message_from_template(template)
+end
+
+defmodule AshTailscale.Example.Endpoint do
+  use Phoenix.Endpoint, otp_app: :ash_tailscale
+
+  # Safe only because the socket accepts connections exclusively from the trusted proxy.
+  plug(Plug.SSL, rewrite_on: [:x_forwarded_proto])
+  plug(Plug.Parsers, parsers: [:urlencoded, :json], pass: [], json_decoder: Jason)
+
+  plug(Plug.Session,
+    store: :cookie,
+    key: "__Host-tailscale_example",
+    path: "/",
+    signing_salt: "csrf-ui-only",
+    same_site: "Lax",
+    secure: true,
+    http_only: true
+  )
+
+  plug(AshTailscale.Example.Router)
+end
+
+defmodule AshTailscale.Example do
+  @moduledoc """
+  Minimal Phoenix endpoint, compiled only in tests. Copy into a consumer application.
+  Prepare a private directory (0700, app-owned; root tailscaled can traverse it)
+  and launch with umask 0077. No TCP listener is configured.
+  """
+  # Unix-only launcher preflight. id -u reports the effective OS identity.
+  def check_directory!(path) do
+    import Bitwise
+    {uid, 0} = System.cmd("id", ["-u"])
+    directory = File.lstat!(path)
+
+    unless directory.type == :directory and (directory.mode &&& 0o777) == 0o700 and
+             directory.uid == String.to_integer(String.trim(uid)) do
+      raise "require a 0700 directory owned by the effective OS user"
+    end
+
+    :ok
+  end
+
+  def config(socket_path, host, secret_key_base) do
+    [
+      adapter: Bandit.PhoenixAdapter,
+      server: true,
+      url: [scheme: "https", host: host, port: 443],
+      secret_key_base: secret_key_base,
+      http: [
+        ip: {:local, socket_path},
+        port: 0,
+        http_1_options: [max_header_length: 66_000],
+        http_2_options: [enabled: false]
+      ],
+      render_errors: [formats: [html: AshTailscale.Example.ErrorHTML], layout: false],
+      pubsub_server: AshTailscale.Example.PubSub
+    ]
+  end
+end
