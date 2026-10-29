@@ -1,0 +1,23 @@
+[Unit]
+Description=Reports Phoenix application behind Tailscale Serve
+Wants=tailscaled.service
+After=network.target tailscaled.service
+
+[Service]
+Type=exec
+DynamicUser=yes
+RuntimeDirectory=reports
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=no
+UMask=0077
+WorkingDirectory=/run/reports
+EnvironmentFile=/etc/reports.env
+Environment=TS_SOCKET_PATH=/run/reports/phoenix.sock
+Environment=RELEASE_TMP=/run/reports
+# Replace REPLACE_WITH_RELEASE_NAME with your built release's binary name.
+ExecStart=/opt/reports/bin/REPLACE_WITH_RELEASE_NAME start
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target
