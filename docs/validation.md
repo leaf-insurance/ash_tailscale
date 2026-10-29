@@ -3,6 +3,7 @@
 This is maintainer evidence, not the consumer setup guide or a promise of general
 production readiness. Start with [README](../README.md) and [setup](deployment.md).
 The internal [design](design.md) retains research references and scope decisions.
+[Maintainer commands and workflows](maintenance.md) cover local checks and release gates.
 
 ## Compatibility decisions
 
@@ -174,7 +175,8 @@ and session authentication are also outside this slice.
 The owner approved MIT with copyright 2026 Philip Munksgaard; `LICENSE` and
 package metadata now record that choice. Release review is still required; no
 release tag or package publication has been made. ExDoc uses the existing
-repository's `main` source links until an authorized release tag/ref is chosen.
+repository's `main` source links by default; the release workflow supplies the
+actual validated tag through `ASH_TAILSCALE_SOURCE_REF`.
 The unreleased Git preview uses a committed dependency lockfile; pin the release
 and update source links when that real release exists, not with an invented tag.
 
@@ -266,3 +268,34 @@ dependencies.
 No generated docs are tracked, and no commit, tag, push or publication was made.
 Remaining work is owner release review, selecting a real release source ref and
 performing any publication explicitly; the license choice is no longer a blocker.
+
+## Credo and workflow preparation
+
+Credo 1.7.19 with AshCredo 0.18.0 passed 94 checks across all 21
+library/test/example files with no findings. Shared Leaf opt-ins augment defaults through
+`checks.extra` (an `enabled` list alone would replace them), including specs,
+module layout, aliases and ten selected Ash checks. No Leaf logger/module-name
+relaxations, umbrella paths or custom checks were copied. Leaf's browser-debug
+check has no current call sites here; its web authorization check is hard-coded
+to `lib/leaf_web/`. Its security principle is relevant, but this small library
+does not need a custom linter framework; intentional `authorize?: false` calls
+are regression tests, not web authorization bypasses.
+
+Fixes flattened header-parser nesting, added hidden fixture module docs, public
+helper specs and callback `@impl` annotations, and aligned declaration/alias order.
+No Ash/DSL false positives or check suppressions were needed. The Plug implementation
+is unchanged. On Elixir 1.18.4 / OTP 28.5.0.3 and 1.20.4 / OTP 29.1.2,
+dev/test formatting and warnings-as-errors compilation, 36 tests + 3 doctests,
+docs with warnings as errors and local Hex builds passed. Packages retain only
+the four production dependencies; both lint tools are dev/test-only. Hex audit was clean.
+
+Actionlint 1.7.12 passed both workflows. Action commit SHAs were verified against
+official repository tags; setup-beam's Ubuntu 24.04 OTP/Elixir build listings and
+artifact URLs contained both selected pairs. The exact workflow version guard
+accepted a matching tag string and rejected mismatched/prefixless strings without
+creating any tag. Only the final publishing step's environment receives the Hex
+key, after reusable CI and version validation; earlier runner code and locked
+build dependencies remain trusted, not isolated from that step. This is local
+validation, **not a hosted GitHub Actions
+run or publication**. Environment protection/reviewers and secrets still require
+owner setup; see [maintenance](maintenance.md).
