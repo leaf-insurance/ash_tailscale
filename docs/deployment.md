@@ -1,298 +1,219 @@
-# Socket recipe and validation status
+# Setup and troubleshooting
 
-## Compatibility decisions
+Start with an **existing Phoenix/Ash app** and the [quickstart](../README.md).
+This recipe targets Bandit 1.14.1 / Phoenix 1.8.16 on Linux with systemd and
+root-owned tailscaled. Add Bandit, Phoenix HTML and an Ash SAT solver (for example
+`{:simple_sat, "~> 0.1.4"}`) if absent. No user table or authentication session/token
+configuration is needed. Other adapters or daemon/group/ACL arrangements need
+separate review/testing.
 
-Stable Hex versions were checked on 2026-10-29; see `mix.lock`. This is the
-**agent-tested local dependency set**, not a version matrix for the later
-user-reported live deployment:
+## 1. Configure the production HTTP endpoint
 
-| Component | Tested version |
-| --- | --- |
-| Elixir / Erlang | 1.18.4 / OTP 28.5.0.3; 1.20.4 / OTP 29.1.1 |
-| Ash / Ash Authentication | 3.37.2 / 4.15.0 |
-| Plug / Jason | 1.20.3 / 1.4.5 |
-| Phoenix / Phoenix HTML | 1.8.16 / 4.3.0 |
-| Bandit / Thousand Island | 1.14.1 / 1.6.0 |
-| SimpleSat (example policy solver) | 0.1.4 |
+**Remove generated production TCP `http:` and backend `https:` configurations**,
+including later `PORT`/bind-IP overrides. Do not merge this with another listener.
+Phoenix HTTP must have no alternative TCP/loopback listener, container port
+publication, TCP-mode Serve or Funnel path. Systemd does not configure Phoenix.
 
-The package targets Elixir 1.18+ (<2.0); the exercised OTP versions are 28 and 29.
-Bandit was selected after Hex reported CVE-2026-43966 against the current
-Cowlib 2.21.0 resolved by Plug Cowboy 2.9.0. Cowboy/Cowlib are not in the final
-dependency lock. Phoenix/Bandit/HTML/SimpleSat are test-only here; a consumer
-adds its own web stack and Ash SAT solver.
+```elixir
+# config/runtime.exs — replace :my_app / MyAppWeb.Endpoint.
+import Config
 
-The spike proved:
-- library-owned `Ash.DataLayer.Simple` resource/domain, with login as primary key;
-- custom strategy protocol `:sign_in` returning a transient actor, no routes or
-  tokens, and no exposed resource sign-in action;
-- explicit rejecting `:get_by_subject` preparation: a serialized subject cannot
-  restore identity or capabilities, including with `authorize?: false`;
-- actual Phoenix HTTP requests over a local Unix socket with Bandit, private
-  directory/socket modes, and controlled stop/cleanup/restart.
+if config_env() == :prod do
+  config :my_app, MyAppWeb.Endpoint,
+    adapter: Bandit.PhoenixAdapter,
+    server: true,
+    secret_key_base: System.fetch_env!("SECRET_KEY_BASE"),
+    url: [scheme: "https", host: System.fetch_env!("TS_HOST"), port: 443],
+    https: false,
+    http: [
+      ip: {:local, System.fetch_env!("TS_SOCKET_PATH")},
+      port: 0,
+      http_1_options: [max_header_length: 66_000],
+      http_2_options: [enabled: false]
+    ]
+end
+```
 
-## Deployment boundary
+Port 0 belongs to a **Unix address**, not an ephemeral TCP listener. The plug
+rejects TCP/missing adapter peer data, but Unix transport does not prove Serve
+identity: privileged and app-user processes remain trusted.
 
-Require **Tailscale >=1.94**, Serve **HTTP proxy** mode, a trusted host, and a
-private socket. There is no backend TCP listener or loopback fallback.
-Socket credentials do not identify a Tailscale user: any process able to connect
-can forge these headers. Root and the app's OS identity are trusted.
+## 2. Endpoint, session and CSRF
 
-The authentication plug enforces Unix-only transport using
-`Plug.Conn.get_peer_data/1`: only `%{address: {:local, _}}` is accepted.
-TCP, missing or nonlocal peer metadata produces generic HTTP 401 and clears
-stale actors before any actor is built. `remote_ip` and forwarded headers are not
-used for this decision. This catches accidentally merged Phoenix runtime TCP
-configuration; it does **not** authenticate the Unix caller as Serve or replace
-socket permissions. A temporary loopback TCP negative test verifies rejection.
+Adapt existing endpoint plugs, avoiding duplicate parsers/sessions. Serve
+terminates HTTPS; trust the scheme header **only with private-socket ingress**:
 
-The simplest tested permissions model is an app-owned directory **0700**, socket
-**0600**, with a root-owned tailscaled able to access it. Configure the service
-manager to create the private directory and set **umask 0077 before starting the
-BEAM**. This protects the socket from its first instant of existence; chmod
-after startup is not a replacement for private directory permissions.
+```elixir
+plug Plug.SSL, rewrite_on: [:x_forwarded_proto]
+plug Plug.Parsers, parsers: [:urlencoded, :json], pass: [], json_decoder: Jason
+plug Plug.Session,
+  store: :cookie,
+  key: "__Host-reports_session",
+  path: "/",
+  signing_salt: "reports-csrf-ui",
+  secure: true,
+  http_only: true,
+  same_site: "Lax"
+plug MyAppWeb.Router
+```
 
-For a daemon running as another non-root identity, arrange a narrowly scoped
-OS group/ACL and review access before deployment. That arrangement has **not**
-been tested here; do not loosen access to all local users. Do not publish a
-container port, add another proxy, or use TCP-mode Serve/Funnel.
+Do **not** add a cookie Domain. The router order is `fetch_session →
+protect_from_forgery → put_secure_browser_headers → AshTailscale.Plug`, as in the
+quickstart. Apply it to HTML **and browser JSON** routes. Deliver
+`Plug.CSRFProtection.get_csrf_token/0` in an escaped form/meta tag; forms submit
+`_csrf_token`, JSON sends `x-csrf-token` with the same session cookie. Do not install
+session/subject identity loaders or exempt JSON from CSRF.
 
-### Minimal executable example
+`__Host-` requires Secure, Path=/ and no Domain in supporting browsers. Tailnet
+siblings can be same-site; ordinary host-only/Lax cookies alone cannot stop a
+sibling tossing a parent-domain CSRF cookie while Serve supplies the victim's
+identity. Keep standard CSRF and browser security headers, not custom Origin or
+Sec-Fetch-Site checks.
 
-The example is compiled in `MIX_ENV=test`; it is not a generated Phoenix app.
-It deliberately stores only disposable, per-process report data in private ETS.
-Copy the modules and adapt application data storage in a consumer.
+## 3. Install and start the release (Linux/systemd)
 
-Create a directory as the application OS user (choose your own path) and run:
+1. **Build and install your application release**, not this library's test demo.
+   Build for the target OS/architecture. Below is a first install; stop the service
+   before replacing an existing release. Replace `REPLACE_WITH_RELEASE_NAME`:
+
+   ```sh
+   MIX_ENV=prod mix release
+   sudo install -d -m0700 /opt/reports
+   sudo cp -a _build/prod/rel/REPLACE_WITH_RELEASE_NAME/. /opt/reports/
+   sudo chown -R root:root /opt/reports
+   sudo chmod 0600 /opt/reports/releases/COOKIE
+   sudo find /opt/reports ! -path /opt/reports/releases/COOKIE -exec chmod u=rwX,go=rX {} +
+   ```
+
+   Code is root-owned and readable/executable by the service; do not embed secrets
+   in it. The release cookie file stays root-only, not world-readable.
+
+2. **Create the protected environment once.** These commands generate a strong
+   secret key base and an independent release cookie, not shared example secrets:
+
+   ```sh
+   sudo install -o root -g root -m0600 /dev/null /etc/reports.env
+   sudo sh -ec '
+     secret=$(openssl rand -hex 64)
+     cookie=$(openssl rand -hex 32)
+     printf "TS_HOST=REPLACE_WITH_SERVE_HOSTNAME\nSECRET_KEY_BASE=%s\nRELEASE_COOKIE=%s\n" "$secret" "$cookie" > /etc/reports.env
+   '
+   sudoedit /etc/reports.env
+   ```
+
+   Set `TS_HOST` to the actual Serve HTTPS hostname. Keep these values stable;
+   do not rerun generation on restarts. PID 1 reads this root:root **0600** file
+   for the service. `RELEASE_COOKIE` supplies the dynamic user with a private
+   cookie without reading or writing the root-owned release cookie file.
+
+3. **Install the [example unit](https://github.com/leaf-insurance/ash_tailscale/blob/main/examples/systemd/reports.service)**,
+   replace its release binary name, then start:
+
+   ```sh
+   sudo install -m0644 deps/ash_tailscale/examples/systemd/reports.service /etc/systemd/system/reports.service
+   sudoedit /etc/systemd/system/reports.service
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now reports.service
+   ```
+
+   `DynamicUser=yes` avoids manual account creation. Systemd supplies **0700**
+   `/run/reports`, umask **0077** (Linux socket **0700**), a writable working directory,
+   and `RELEASE_TMP` there for release operations that need temporary files.
+   The unit runs foreground `bin/RELEASE_NAME start`, never `mix run` or daemon
+   mode. `RuntimeDirectoryPreserve=no` cleans up the socket after stopping,
+   including failure/restart cycles; `Restart=on-failure` restarts the service.
+   No stale-socket unlink hook is needed. Reserve the service identity and
+   `/run/reports` **exclusively for this unit**: no second app or manual process.
+   Root-owned tailscaled can traverse the private directory. Persistent app data,
+   if needed, requires its own managed storage, not this disposable directory.
+
+Check `systemctl status reports` / `journalctl -u reports`. Use
+`systemctl show reports -p MainPID --value` and `sudo ss -xlpn` to verify the
+running BEAM owns `/run/reports/phoenix.sock`; check modes with
+`sudo stat -c '%a %n' /run/reports /run/reports/phoenix.sock`. Inspect `sudo ss -ltnp`
+and effective endpoint config for unintended **Phoenix HTTP** listeners. Release
+management/clustering interfaces remain the consumer's responsibility.
+An isolated Debian 13/systemd 257.13 container test passed DynamicUser startup,
+permissions and restart cleanup. Revalidate on your target deployment; this was
+not a real Serve/TLS/browser test.
+
+## 4. Grants and Serve
+
+Use an **untagged, user-owned browser client** and a tagged server. Define the
+group/tag ownership in your tailnet policy; use your own capability namespace:
+
+```json
+{
+  "grants": [{
+    "src": ["group:staff"],
+    "dst": ["tag:reports"],
+    "ip": ["tcp:443"],
+    "app": {"example.com/cap/reports": [{"actions": ["read", "write"]}]}
+  }]
+}
+```
+
+Network access and app permissions are separate. The `actions` schema belongs to
+this example consumer; the library keeps JSON opaque. As an authorized operator,
+configure Serve 1.94+ **HTTP proxy** mode once:
 
 ```sh
-mkdir -m 700 /run/my-app
+sudo tailscale serve --bg --accept-app-caps=example.com/cap/reports unix:/run/reports/phoenix.sock
+```
+
+This persists separately from the application unit. Do not run Serve from an
+unprivileged `ExecStartPost`; systemd neither sets grants nor configures Serve.
+Test the real HTTPS URL: human identity, write grant removal/restoration in one
+session, missing CSRF rejection, spoofed-header sanitization, tagged-client
+rejection, cross-user socket isolation, and stopped-service restart. Check browser
+cookie scope/prefix enforcement too; repeat these checks for every deployment.
+
+## Testing and troubleshooting
+
+- **401:** check human login, capability JSON and Unix peer. Tagged clients stay
+  unauthorized even with network/capability grants.
+- **403:** distinguish CSRF failure from a predicate denying an Ash action. Pass
+  `actor: Ash.PlugHelpers.get_actor(conn)` on each Ash call.
+- **431:** Bandit's default header bound is 10,000 bytes; this recipe uses 66,000
+  for Q-encoding expansion. Raw/decoded library byte limits are login 4096/1024,
+  name/profile 16384/4096 each, capabilities 65536/16384. Duplicates, invalid
+  login/capabilities and oversize headers reject; bad optional display decoding
+  becomes nil.
+- **DNS/TLS:** fix DNS separately. `curl --resolve` can diagnose with the real
+  HTTPS hostname/certificate verification; never use `-k`.
+
+For in-process tests, supply **test-adapter** peer data before dispatch:
+
+```elixir
+conn =
+  Plug.Test.conn(:get, "/")
+  |> Plug.Test.put_peer_data(%{address: {:local, ""}, port: 0})
+  |> Plug.Conn.put_req_header("tailscale-user-login", "alice@example.com")
+```
+
+`Phoenix.ConnTest.build_conn()` can replace the first line, but still needs the
+same `put_peer_data` and header calls before dispatch. Unsafe methods also need
+session/CSRF. This simulates transport, not isolation or Serve. For policy tests,
+use `AshTailscale.test_actor!/2`.
+
+### Repository demo (not production)
+
+Examples compile only in `MIX_ENV=test`, using disposable ETS data. Static HEEx
+shows the assigned identity with automatic escaping; the separate write/CSRF form
+is **not a login step**. `phoenix_live_view` supplies dev/test-only component and
+formatter tooling, not LiveView authentication, sockets or mounts.
+
+```sh
 umask 0077
-export TS_SOCKET_PATH=/run/my-app/phoenix.sock
-export TS_HOST=my-app.your-tailnet.ts.net
-# Supply a strong, stable >=64-byte secret via your normal secret manager:
-export SECRET_KEY_BASE='...'
+export TS_SOCKET_PATH="$(mktemp -d)/phoenix.sock" # separate from the unit's directory
+export TS_HOST=your-serve-hostname
+export SECRET_KEY_BASE="$(mix phx.gen.secret)"
 MIX_ENV=test mix run --no-halt examples/serve.exs
 ```
 
-`/run` directory creation usually belongs to the service manager, not an
-unprivileged interactive shell. Never use the example test secret in deployment.
-The Unix-only launcher checks that the directory is not a symlink, is mode 0700,
-and is owned by the effective OS identity (via `id -u`). It requires explicit
-configuration and refuses an existing socket path. After startup it asserts that
-the adapter's running listener is the expected Unix socket. Its tested endpoint
-configuration is:
-
-```elixir
-adapter: Bandit.PhoenixAdapter,
-server: true,
-url: [scheme: "https", host: serve_hostname, port: 443],
-http: [
-  ip: {:local, socket_path},
-  port: 0,
-  http_1_options: [max_header_length: 66_000],
-  http_2_options: [enabled: false]
-]
-```
-
-`port: 0` here is required for the **Unix address**; it is not an ephemeral TCP
-listener. The tests assert `Bandit.PhoenixAdapter.server_info/2` returns
-`{:ok, {:local, socket_path}}`. No `:https` backend listener is configured:
-Serve terminates HTTPS.
-
-Bandit/OTP leave the socket inode after shutdown. After confirming the previous
-service has fully stopped, remove the stale socket **inside the private directory**
-before restarting. Do not automatically unlink a live socket. A supervised
-listener restart alone cannot be assumed to handle stale files; the tested
-recipe is a complete service stop, cleanup, and restart. The directory must not
-be writable by untrusted users.
-
-After explicit operator approval to change Serve/network policy:
-
-```sh
-tailscale serve --bg --accept-app-caps=example.com/cap/reports unix:/run/my-app/phoenix.sock
-```
-
-Agents documented this command without executing it or modifying host services.
-The operator subsequently reported the live checks below. Configure appropriate
-network grants and app capabilities for your deployment. Serve-shaped forwarded
-JSON for the example is:
-
-```json
-{"example.com/cap/reports":[{"actions":["read"]},{"actions":["write"]}]}
-```
-
-Serve capability values are arrays or null. The example consumer uses
-`Enum.any?/2` over individual map entries for its own `actions` schema, ignoring
-malformed entries and denying missing/null/empty grants. It never flattens entries
-or unions fields across scopes. The namespace/schema are consumer choices; the
-library preserves arbitrary JSON and does not interpret them. See the grant
-example in [design.md](design.md).
-
-### Browser protections
-
-`examples/browser.ex` uses:
-1. `Plug.SSL, rewrite_on: [:x_forwarded_proto]` at the endpoint, trusting that
-   header only because ingress is isolated to Serve;
-2. URL-encoded/JSON parsers and a signed `__Host-tailscale_example` cookie with
-   explicit `path: "/"`, `secure: true`, HttpOnly, SameSite=Lax, and **no Domain**;
-3. router `fetch_session → protect_from_forgery → AshTailscale.Plug` for **both**
-   forms and browser JSON.
-
-The `__Host-` prefix is essential for this ambient-identity integration.
-The Public Suffix List includes `ts.net` and `*.c.ts.net`, **not every tailnet
-suffix**. Siblings such as `app.tailXXXX.ts.net` and `other.tailXXXX.ts.net`
-can be same-site. A sibling can set an ordinary cookie with the app's cookie name
-and `Domain=tailXXXX.ts.net`; merely making the app's own cookie host-only and
-SameSite=Lax does not prevent that cookie tossing. Planting an attacker's valid
-CSRF session/token is especially dangerous here because Serve independently adds
-the victim's current identity and capabilities.
-
-Supporting browsers reject a `__Host-` cookie with a Domain attribute, without
-Secure, or with a path other than `/`. Keep the exact case-sensitive prefix and
-these attributes. Automated tests assert the emitted Set-Cookie attributes and
-normal CSRF behavior, not browser enforcement. The user subsequently reported a
-successful sibling-host browser check of prefix enforcement and application-cookie
-configuration; this was **not a full two-user privilege-escalation simulation**.
-See [the reported results and limits](#user-reported-manual-live-smoke-checks).
-No custom origin validator is added.
-
-The GET page delivers a normal Phoenix/Plug CSRF token. Forms submit
-`_csrf_token`; JSON clients send `x-csrf-token` with the same session cookie.
-Missing/bad tokens return 403 before authentication; valid tokens do not replace
-current identity headers. Missing/bad identity returns 401, and denied example
-write policies return 403. GET/HEAD must remain free of application mutations.
-No custom Origin or Sec-Fetch-Site handling is added. Do not put JSON routes into
-an unprotected API pipeline. Session contents are tested to contain only the
-CSRF token, never login, actor, or capabilities.
-
-Escape display fields and do not fetch profile URLs server-side. Avoid logging
-raw assertions. Do not install standard Ash Authentication session/subject
-loaders or combine another session's user with these capabilities.
-
-## Header parsing bounds
-
-Limits are bytes, inclusive, per relevant header:
-
-| Header | Raw bytes | Decoded bytes |
-| --- | ---: | ---: |
-| User-Login | 4,096 | 1,024 |
-| User-Name | 16,384 | 4,096 |
-| User-Profile-Pic | 16,384 | 4,096 |
-| App-Capabilities | 65,536 | 16,384 |
-
-Missing/empty login (including whitespace-only) is invalid. Login is preserved,
-not lowercased or trimmed. Missing/empty optional profile fields become nil.
-Invalid optional display encoding/UTF-8/control characters also yield nil, not
-authentication failure (for example a name `=?foo` or a tab). **Raw and decoded
-byte-limit violations remain hard failures on all fields**, including display
-fields. Login and capabilities remain strict.
-Absent capabilities become `%{}`; a present empty header, invalid JSON, or
-non-object top-level JSON (including top-level null) is invalid. Nested nulls,
-scalars, arrays and objects are unchanged. Jason's ordinary JSON parsing
-semantics apply; there is no recursive schema/duplicate-key validator.
-
-Headers are case-insensitive; duplicate assertion headers are rejected.
-Complete UTF-8 RFC2047 Q/B words are decoded; adjacent words separated by
-spaces/tabs are concatenated without that whitespace. Raw ASCII underscores
-remain underscores; Q underscores mean spaces. Other charsets, malformed/trailing
-mixed text on values starting with `=?`, invalid UTF-8, and disallowed controls
-fail decoding: identity/capability failures reject the assertion, while optional
-display failures yield nil. Encoded-looking substrings inside raw JSON or display
-text remain literal data. Entire ASCII display values that look like encoded
-words are inherently ambiguous; display data never grants authority. Encoded JSON
-formatting whitespace is allowed by the ordinary JSON parser. The HTTP server may
-itself reject malformed wire headers before this handling runs.
-
-Bandit's default HTTP/1 header-length bound is **10,000 bytes including name and
-value**. The example raises it to **66,000** to accommodate the package's raw
-capability limit plus header name; larger headers receive HTTP 431 before the
-plug. Q encoding can expand data substantially. The example disables backend
-HTTP/2. These are bounds, not a capability schema or key allowlist.
-
-## Agent-run automated and local validation
-
-```sh
-mix deps.get
-mix format
-mix format --check-formatted
-mix compile --warnings-as-errors
-MIX_ENV=test mix compile --warnings-as-errors
-mix test
-mix hex.audit
-# Optional fixture regeneration; checked-in fixture was produced with Go 1.26.4:
-go run test/fixtures/generate.go > test/fixtures/go_q.json
-```
-
-The 34 agent-run automated tests exercise real Ash create/read/update/destroy
-authorization, a consumer row-filter alternative returning an empty list,
-parser/byte-bound failures,
-Go Q multiword fixtures, actor isolation, subject reload rejection, literal-true
-predicate handling, and real HTTP form/JSON CSRF rejection/success on a Unix socket.
-They never connect to tailscaled. **34 tests pass on both tested toolchains**;
-format checks and project compilation with warnings as errors pass. `mix hex.audit`
-reports no retired or security-advisory packages in the final lock. A separate
-launcher smoke test ran two start/stop/cleanup cycles with umask 0077: directory
-0700, socket 0600, HTTP 401 without identity and 200 with a local test assertion.
-The corrective-pass rerun also verified the emitted `__Host-` cookie prefix,
-Path=/, Secure and absence of Domain over HTTP; it did not exercise a browser.
-This was local-only, not a Serve test. Launcher preflight tests cover owned 0700
-directories, wrong modes, symlinks, and rejection based on a foreign-owned 0700
-`/root` directory's metadata (read-only; the latter test skips where that fixture
-is unavailable). Agents performed no privileged launch, ownership changes,
-cross-user connection probe or daemon permission test; the later operator-reported
-socket isolation checks are recorded separately below.
-
-Dependency compilation can emit upstream
-warnings (notably optional Igniter calls in Ash and Elixir 1.20 deprecations);
-project compilation is checked separately with warnings as errors.
-
-When switching OTP versions, use a separate **absolute** `MIX_BUILD_PATH` and
-clean generated rebar dependency artifacts if necessary. A first alternate
-toolchain attempt with a relative build path/shared rebar cache failed compiling
-yamerl; a clean absolute build succeeded.
-
-## User-reported manual live smoke checks
-
-**Agreed manual smoke checklist: passed for the user's tested setup, as reported
-by the user.** These later checks ran on the operator's own server/tailnet and were
-not directly observed by the implementation or orchestration agents. No exact
-browser/server version matrix was supplied.
-
-Reported results:
-- **Human identity and current grants:** a browser on a user-owned client
-  authenticated and an Ash create returned the expected real login. Removing
-  write permission yielded 403; restoring it yielded 200 in the **same session**.
-- **CSRF:** submitting without a token yielded 403/`InvalidCSRFTokenError`;
-  normal form submission succeeded.
-- **Header sanitization:** forging `Tailscale-User-Login` still returned the true
-  login. Forging `Tailscale-App-Capabilities` while write permission was removed
-  still yielded 403.
-- **Tagged client:** a separate tagged client granted TCP 443 and read/write
-  capabilities received 401. It had read-only `resolv.conf`/DNS health warnings;
-  the test used `curl --resolve` with the server address and HTTPS hostname,
-  **not `-k`**, retaining TLS certificate verification. Native DNS was neither
-  fixed nor validated.
-- **Socket isolation and restart:** the app OS account connected and received 401
-  without identity headers; an unrelated unprivileged OS account could not
-  connect. With Serve left running, the operator stopped Phoenix, removed the
-  stale socket, restarted it, and successfully submitted from the real browser.
-- **Browser cookie enforcement:** a sibling-host test accepted an ordinary
-  parent-domain control cookie but rejected an attempted `__Host-` cookie with
-  Domain. The actual application cookie was verified as Secure, HttpOnly, Path=/
-  and scoped to the exact hostname. The normal form worked, and the user reported
-  completing all cleanup instructions.
-
-The cookie check validates real-browser prefix enforcement/configuration only,
-**not a complete two-user privilege-escalation attack simulation**. The named
-browser/version matrix, broader server/platform coverage and tagged-client native
-DNS remain gaps. New environments must rerun the smoke checks, including their
-socket/daemon permissions and browser behavior; these reports are not a general
-production-readiness guarantee. No package publication or release tag is implied.
-
-Historically, the agents' local CLI reported Tailscale **1.102.5**, but agents
-made no real Serve requests and did not change tailscaled, Serve, grants or host
-services. The later operator-run live checks above are separate evidence, not
-retroactive claims about agent testing.
-
-LiveView, headless APIs, tagged capability-only principals and session
-authentication are not deferred pieces of this slice: they are unsupported scope.
+The launcher checks ownership/mode and the bound Unix listener, refusing an
+existing socket. It does not configure grants/Serve; an operator must point Serve
+at this demo's path separately. Remove its directory only after stopping it.
+`mix test` runs the local suite. [Maintainer validation](https://github.com/leaf-insurance/ash_tailscale/blob/main/docs/validation.md)
+records user-reported live checks and limits, including no full two-user
+cookie-tossing simulation or named browser/version matrix.

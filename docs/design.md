@@ -1,4 +1,7 @@
-# AshTailscale: v0.1 design
+# AshTailscale: internal v0.1 design reference
+
+Maintainer reference, not the consumer onboarding guide. Start with the
+[quickstart](../README.md) and [setup guide](deployment.md).
 
 Status: implemented; 34 agent-run automated tests and local socket checks passed.
 The user subsequently reported passing the agreed manual live Serve/tailnet smoke
@@ -6,8 +9,9 @@ checklist for their own setup; agents did not directly observe that deployment.
 No package publication, release tag or broader production-readiness guarantee.
 Research and stable dependency compatibility checked 2026-10-29. The approved
 scope below is unchanged; API examples reflect the working implementation.
-See [deployment and validation](deployment.md) for agent-tested versions, socket
-recipe, byte bounds, user-reported live results and remaining coverage limits.
+See [validation](validation.md) for agent-tested versions, byte bounds,
+user-reported live results and remaining coverage limits; see [setup](deployment.md)
+for the current consumer recipe.
 
 ## Goal
 
@@ -32,7 +36,11 @@ capabilities are permissions for that request, not permanent roles.
 The first release supports one topology and one integration: **Serve's HTTP proxy
 → private Unix socket → Phoenix browser routes with session/CSRF protection**.
 Browser-driven JSON requests use the same protection. Headless API integration,
-LiveView, and capability-only tagged clients are out of scope.
+LiveView, and capability-only tagged clients are out of scope for this release.
+
+**Next milestone:** a LiveView-friendly integration, with a separately reviewed
+handshake, actor freshness and capability-revocation design. It remains unsupported
+now; the static HEEx example does not implement that lifecycle.
 
 ## What Tailscale provides
 
@@ -71,13 +79,13 @@ tailscale serve --bg --accept-app-caps=example.com/cap/my-app unix:/run/my-app/p
 Tailscale 1.94 supports this HTTP proxy target on Unix-like systems. [CLI source][unix]
 Use an application-owned directory and socket permissions allowing only the
 application and the Serve daemon's intended operating-system identity to access
-it. Do not add a TCP listener, port publication, TCP-mode Serve/Funnel forwarding,
+it. Do not add another backend HTTP listener, port publication, TCP-mode Serve/Funnel forwarding,
 or another proxy to the backend. A trusted host remains part of the boundary.
 
 The compatibility spike tested Phoenix with Bandit over a local Unix socket,
 including socket creation, private permissions, and controlled stop/cleanup/restart.
 The user later reported successful live Serve/Unix-socket checks, including
-isolation and restart. [Local evidence, reported live results and limitations](deployment.md)
+isolation and restart. [Local evidence, reported live results and limitations](validation.md)
 are documented separately, rather than claimed as a platform/version matrix.
 New deployments must repeat the smoke checks.
 
@@ -111,6 +119,7 @@ Implemented and tested Phoenix pipeline (HTML and browser JSON):
 pipeline :tailscale_authenticated do
   plug :fetch_session
   plug :protect_from_forgery
+  plug :put_secure_browser_headers
   plug AshTailscale.Plug
 end
 ```
@@ -261,7 +270,8 @@ capability-only callers can be a separate follow-up; do not fabricate a user.
    Path=/ and no Domain. Ordinary SameSite=Lax/host-only cookies do not prevent a
    sibling tailnet host from tossing a domain cookie containing an attacker's
    valid CSRF session/token, while Serve attaches the victim's ambient identity.
-   See [browser protections and the scope of reported browser checks](deployment.md#browser-protections).
+   See [browser setup](deployment.md#2-endpoint-session-and-csrf) and
+   [the scope of reported browser checks](validation.md#user-reported-manual-live-smoke-checks).
    Require Phoenix's
    standard CSRF protection on every authenticated browser route, including JSON
    writes; a normal unprotected `:api` pipeline is not supported.
@@ -343,13 +353,13 @@ The first milestone is simply:
 The implemented slice uses stable Ash **3.37.2**, Ash Authentication **4.15.0**,
 Phoenix **1.8.16** and Bandit **1.14.1**. Ash Authentication Phoenix is not needed.
 The Elixir requirement is `~> 1.18`; tests passed on Elixir **1.18.4 / OTP 28.5.0.3**
-and **1.20.4 / OTP 29.1.1**. See the lockfile and [validation notes](deployment.md).
+and **1.20.4 / OTP 29.1.1**. See the lockfile and [validation notes](validation.md).
 Those versions describe agent-run local tests. The user later reported successful
 live identity, grant-change, CSRF, header-spoofing, tagged-client rejection,
 socket-isolation/restart and browser cookie-prefix checks. No exact live
 browser/server version matrix was supplied. Cookie checks were not a full two-user
 attack simulation, and the tagged client's native DNS remained unvalidated.
-See [the scoped manual results](deployment.md#user-reported-manual-live-smoke-checks);
+See [the scoped manual results](validation.md#user-reported-manual-live-smoke-checks);
 other environments must rerun them.
 
 - [Tailscale Serve: headers and security][serve]

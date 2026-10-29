@@ -1,185 +1,152 @@
 # AshTailscale
 
-Transient [Ash Authentication](https://hexdocs.pm/ash_authentication/) actors for
-Phoenix browser applications behind **Tailscale Serve 1.94+**.
+Authenticate Phoenix browser requests with Tailscale Serve, then authorize Ash
+actions using your application's capability predicates. Each request gets a fresh
+`AshTailscale.User`: no user database, provisioning, lookup, tokens, or session
+identity. The library supplies its own resource, domain and authentication strategy;
+you do not configure an Accounts domain or add a strategy to your user resource.
 
-**Working v0.1 slice, not published or release-tagged:** agents ran 34 automated
-tests plus local socket checks. The user subsequently reported passing the agreed
-manual live Serve/tailnet smoke checklist on their own setup; agents did not
-directly observe that deployment. This is not a broader production-readiness or
-platform guarantee. See [validation results and limits](docs/deployment.md#user-reported-manual-live-smoke-checks).
+**Supported:** Tailscale 1.94+ HTTP proxy → private Unix socket → Phoenix browser
+HTML/JSON routes with session/CSRF protection. No backend HTTP TCP listener, Funnel,
+LiveView, headless APIs, or optional authentication. Tagged clients have no human
+login and are rejected. Identified shared-device visitors are not necessarily
+members of your tailnet.
 
-```text
-Tailnet browser → Serve HTTPS / HTTP proxy → private Unix socket
-    → Phoenix session + CSRF → fresh Ash actor → consumer Ash policies
-```
+## 1. Install in an existing Phoenix/Ash application
 
-No user database, provisioning, lookup, account mapping, authentication tokens,
-or session identity. The library owns `AshTailscale.User` and its domain; login
-is the primary key. Capabilities remain opaque JSON, including nested nulls.
-
-## Integration
-
-Use a local path dependency until a package is published:
+The first Hex release is **pending**, not published. For now use Git and commit
+your dependency lockfile:
 
 ```elixir
-{:ash_tailscale, path: "../ash-tailscale"}
+# mix.exs — use this now:
+{:ash_tailscale, github: "leaf-insurance/ash_tailscale", branch: "main"}
+# After the first Hex release, replace it with:
+# {:ash_tailscale, "~> 0.1.0"}
 ```
 
-The tested consumer uses Phoenix 1.8.16, Phoenix HTML 4.3.0, Bandit 1.14.1 and
-SimpleSat 0.1.4 (a consumer's Ash SAT solver). These are test-only dependencies
-here; add them to your application as appropriate. Ash 3.37 requires an explicit
-choice in your config:
+Run `mix deps.get`. Target Elixir 1.18+; the tested web stack is Phoenix 1.8.16 /
+Bandit 1.14.1 with Ash 3.37.2 / Ash Authentication 4.15.0. Your application needs
+Bandit, Phoenix HTML for HTML rendering, and an Ash SAT solver (for example
+`{:simple_sat, "~> 0.1.4"}`).
 
-```elixir
-config :ash, default_string_length_count: :codepoints
-```
+The upstream authentication dependency builds a bcrypt NIF, so a C toolchain is
+needed even though this strategy does not use passwords.
 
-Bind **only** to a private Unix socket, with no TCP fallback. Then, after approval
-to configure Serve:
+## 2. Isolate the endpoint and enable Serve
+
+Follow the **[setup guide](docs/deployment.md)** before accepting traffic: it
+includes Unix-only Bandit config, a production-release systemd unit with a private
+runtime directory, `__Host-` session/CSRF config, and a matching tailnet grant.
+
+The example uses capability `example.com/cap/reports`, with entries such as
+`[{"actions":["read","write"]}]`. Replace the namespace with a domain you control
+consistently in grants, Serve and the predicate. After configuring the grant:
 
 ```sh
-tailscale serve --bg --accept-app-caps=example.com/cap/my-app unix:/run/my-app/phoenix.sock
+tailscale serve --bg --accept-app-caps=example.com/cap/reports unix:/run/reports/phoenix.sock
 ```
 
-Use a capability namespace under a domain you control. Every protected browser
-route, **including JSON writes**, must use:
+Headers are unsigned assertions. The plug checks the actual Unix peer, **not**
+`remote_ip` or forwarded addresses, but cannot prove that the caller is Serve.
+Socket permissions and a trusted host remain essential.
+
+## 3. Authenticate every browser route
+
+With the endpoint session configuration from the setup guide, put **all**
+protected HTML and browser JSON routes through this pipeline:
 
 ```elixir
-pipeline :tailscale_authenticated do
+# MyAppWeb.Router
+pipeline :tailscale do
   plug :fetch_session
   plug :protect_from_forgery
+  plug :put_secure_browser_headers
   plug AshTailscale.Plug
+end
+
+scope "/", MyAppWeb do
+  pipe_through :tailscale
+  post "/reports", ReportController, :create
 end
 ```
 
-The endpoint must configure `Plug.Session` with a `__Host-` prefixed cookie,
-explicit `path: "/"`, `secure: true`, and **no Domain**, plus the actual Serve HTTPS
-URL and trusted forwarded-scheme handling. Ordinary host-only cookies and
-SameSite=Lax alone do not prevent sibling tailnet hosts from tossing a matching
-domain cookie; see the [browser security explanation](docs/deployment.md#browser-protections). See the complete, tested
-[endpoint/router](examples/browser.ex) and [socket recipe](docs/deployment.md).
-The plug has no options. It accepts only Unix peers reported by the actual Plug
-adapter; TCP/missing peer metadata and invalid assertions halt with generic HTTP
-401 and clear stale actors. Forwarded headers and `remote_ip` cannot satisfy this
-transport check. A Unix peer is **not** proof that the caller is Serve.
 Success sets `conn.assigns.current_user` and `Ash.PlugHelpers.get_actor(conn)`.
-The session is only for CSRF/UI state.
+Missing/invalid identity or a non-Unix peer returns 401 and clears stale actors.
+Forms need the normal CSRF token; browser JSON sends `x-csrf-token` with the session
+cookie. Do not move JSON writes into an unprotected API pipeline. The session holds
+only CSRF/UI state. GET/HEAD must not mutate application data.
 
-### Policies
+## 4. Authorize Ash actions explicitly
 
-Use a compile-safe MFA; the whole decoded capability map is prepended to the
-extra arguments:
+Serve capability values are arrays or null. This **consumer-owned** predicate
+evaluates each entry independently; it does not merge permissions across scopes:
 
 ```elixir
-policy action_type(:read) do
-  authorize_if {AshTailscale.CapabilityCheck,
-                predicate: {MyApp.Capabilities, :can_read?, []}}
-end
+defmodule MyApp.Capabilities do
+  def allowed?(caps, action) do
+    case caps["example.com/cap/reports"] do
+      entries when is_list(entries) ->
+        Enum.any?(entries, fn
+          %{"actions" => actions} when is_list(actions) -> action in actions
+          _ -> false
+        end)
 
-# In your consumer module (this schema is entirely yours):
-def can_read?(caps) do
-  case caps["example.com/cap/my-app"] do
-    entries when is_list(entries) ->
-      Enum.any?(entries, fn
-        %{"reports" => true} -> true
-        _ -> false
-      end)
-
-    _ -> false
+      _ -> false
+    end
   end
 end
 ```
 
-Serve forwards each capability value as an array of entries or null, for example
-`{"example.com/cap/my-app":[{"reports":true}]}`. This consumer evaluates each
-entry independently; it does not flatten or combine permissions across scopes.
-The library parser still preserves arbitrary JSON without enforcing this schema.
-
-Only a library-built Tailscale actor and a literal `true` authorize. Exceptions,
-throws, exits, non-booleans, nil and unrelated actors fail closed. The check
-does not supply row-level ownership/tenancy filtering. A sole denied simple
-check returns `Ash.Error.Forbidden` in the tested Ash version; policies with
-independent row-filter alternatives may instead return an empty list.
-
-See [real read/write policies](examples/reports.ex). Its private ETS report data
-is a disposable example, **not** an identity store.
-
-### Server-side builder and tests
+Add `Ash.Policy.Authorizer` to your application's resource and use the MFA check:
 
 ```elixir
-{:ok, actor} = AshTailscale.from_headers(conn.req_headers)
-actor.capabilities # entire JSON object, unmodified values
+# In your report resource's policies block:
+policy action_type(:read) do
+  authorize_if {AshTailscale.CapabilityCheck,
+                predicate: {MyApp.Capabilities, :allowed?, ["read"]}}
+end
 
-# Policy tests only:
-actor = AshTailscale.test_actor!("alice@example.com", %{"custom" => nil})
+policy action_type([:create, :update, :destroy]) do
+  authorize_if {AshTailscale.CapabilityCheck,
+                predicate: {MyApp.Capabilities, :allowed?, ["write"]}}
+end
 ```
 
-The builder is pure and does **not** establish trust. Never expose it to request
-parameters or use the test helper as a production bypass. The plug invokes the
-route-less, token-free custom strategy using an internal server-side assertion.
-Subject/session reload cannot restore authority, even with Ash authorization
-disabled.
-
-## Boundaries
-
-- Headers and provenance metadata are **not signed credentials**. Private socket
-  permissions, Serve's header sanitization, and a trusted host establish trust.
-- Only Serve **HTTP proxy** to a private Unix socket is supported. No backend TCP
-  listener, loopback fallback, TCP forwarding, Funnel, or alternative ingress.
-- Human login is required. Tagged clients without user identity are rejected.
-  Shared-device visitors can be identified; identity is not tailnet membership.
-- Do not persist/cache actors or capabilities in cookies, JWTs or jobs. Login can
-  change or be reassigned. Display names/profile URLs never grant permissions;
-  decoding failures in these optional fields yield nil, but byte-limit violations
-  still reject the request.
-- No LiveView, headless API integration, optional authentication, capability
-  allowlist, custom Origin/Sec-Fetch-Site checks, or observation timestamps.
-
-## Tests and compatibility
-
-```sh
-mix deps.get
-mix format --check-formatted
-mix compile --warnings-as-errors
-mix test
-```
-
-Tested with Elixir **1.18.4 / OTP 28.5.0.3** and **1.20.4 / OTP 29.1.1**.
-The dependency lock uses stable Ash **3.37.2** and Ash Authentication **4.15.0**;
-no Ash Authentication Phoenix integration is needed. Building the upstream
-authentication dependency includes its bcrypt NIF (requires a C toolchain), but
-this strategy does not use passwords or tokens.
-
-### In-process request tests
-
-`Phoenix.ConnTest` / `Plug.Test` requests passing through `AshTailscale.Plug`
-must set Unix peer data on the **test adapter before dispatch**, as well as
-supply test identity headers:
+**Pass the actor into each Ash call**; setting it on a connection does not
+automatically authorize resource operations:
 
 ```elixir
-# Test-only setup; then dispatch through your endpoint/router.
-conn =
-  Plug.Test.conn(:get, "/")
-  |> Plug.Test.put_peer_data(%{address: {:local, ""}, port: 0})
-  |> Plug.Conn.put_req_header("tailscale-user-login", "alice@example.com")
+# Inside MyAppWeb.ReportController.create/2:
+actor = Ash.PlugHelpers.get_actor(conn)
+case Ash.create(MyApp.Reports.Report, %{title: "Browser submission"}, actor: actor) do
+  {:ok, report} -> json(conn, %{id: report.id})
+  {:error, %Ash.Error.Forbidden{}} -> send_resp(conn, 403, "Forbidden")
+  {:error, _error} -> send_resp(conn, 500, "Request failed")
+end
 ```
 
-For Phoenix controller tests, start with `Phoenix.ConnTest.build_conn()` instead
-and apply the same setup before dispatch. Unsafe methods still require the normal
-session cookie and matching CSRF token (form `_csrf_token` or `x-csrf-token`);
-peer data and identity headers do not replace CSRF protection.
+Only a valid library actor and literal `true` authorize; predicate exceptions and
+non-booleans deny. The library preserves arbitrary capability JSON, including
+nested nulls, without imposing this example's schema. Add your own ownership or
+tenancy policies: this boolean check is not a row-level filter. A denied simple
+check alone returns an Ash forbidden error; row-filter alternatives can yield
+an empty read result instead. Adapt the generic error fallback to your application.
 
-This **simulates transport for in-process tests**. It does not exercise a real
-Unix socket, validate backend isolation, or prove Serve sanitizes headers. It is
-not a production bypass. Real network/deployment tests remain necessary.
+## Testing and boundaries
 
-The repository's network tests use temporary Unix sockets and a loopback TCP listener solely to verify
-rejection of accidental TCP configuration, never tailscaled. Go-generated RFC2047
-fixtures are checked in; Go is needed only to regenerate them.
-See [design](docs/design.md) for the security model and
-[deployment](docs/deployment.md) for byte limits, commands, and the separate
-user-reported live results. Those checks include browser cookie-prefix enforcement,
-not a full two-user attack simulation. No named browser/server version matrix was
-supplied; the tagged client's native DNS remains unvalidated. New environments
-must rerun the smoke checks.
+Use `AshTailscale.test_actor!/2` for policy tests, and see the
+[setup/testing guide](docs/deployment.md#testing-and-troubleshooting) for in-process
+request setup and the executable repository demo. Its static HEEx page shows who
+is signed in on the initial GET, with automatic HTML escaping; the form is a
+separate write-permission/CSRF demo. This adds no LiveView authentication. The
+[compiled example](https://github.com/leaf-insurance/ash_tailscale/blob/main/examples/reports.ex)
+uses the same predicate/schema.
+
+Never persist actors/capabilities in cookies, JWTs, caches or jobs. Login can
+change or be reassigned. Escape display fields; do not fetch profile URLs server-side.
+Optional display decoding failures become nil; byte limits still apply.
+
+[MIT license](https://github.com/leaf-insurance/ash_tailscale/blob/main/LICENSE).
+Publication/release review is pending. For maintainers, the
+[validation record](https://github.com/leaf-insurance/ash_tailscale/blob/main/docs/validation.md)
+separates automated tests from user-reported live checks and their limitations.
