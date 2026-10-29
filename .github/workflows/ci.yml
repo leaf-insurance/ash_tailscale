@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.18.4"
+            otp: "28.5.0.3"
+          - elixir: "1.20.4"
+            otp: "29.1.2"
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@e6d7c94229049569db56a7ad5a540c051a010af9 # v1.20.4
+        id: beam
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            deps
+            _build/test
+          key: mix-v1-ubuntu24-${{ runner.arch }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-test-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-v1-ubuntu24-${{ runner.arch }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-test-
+      - name: Fetch locked dependencies
+        run: mix deps.get --check-locked
+      - name: Compile dependencies
+        run: mix deps.compile
+      - name: Compile project
+        run: mix compile --warnings-as-errors
+      - name: Check formatting
+        run: mix format --check-formatted
+      - name: Strict Credo (library, tests and examples)
+        run: mix credo --strict
+      - name: Test
+        run: mix test --warnings-as-errors
+
+  docs:
+    name: Docs and package
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: dev
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@e6d7c94229049569db56a7ad5a540c051a010af9 # v1.20.4
+        id: beam
+        with:
+          elixir-version: "1.18.4"
+          otp-version: "28.5.0.3"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: |
+            deps
+            _build/dev
+          key: mix-v1-ubuntu24-${{ runner.arch }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-dev-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            mix-v1-ubuntu24-${{ runner.arch }}-${{ steps.beam.outputs.otp-version }}-${{ steps.beam.outputs.elixir-version }}-dev-
+      - name: Fetch locked dependencies
+        run: mix deps.get --check-locked
+      - name: Compile dependencies
+        run: mix deps.compile
+      - name: Compile project
+        run: mix compile --warnings-as-errors
+      - name: Check dev formatting
+        run: mix format --check-formatted
+      - name: Build docs
+        run: mix docs --warnings-as-errors
+      - name: Build package locally (never publish)
+        run: mix hex.build --output "$RUNNER_TEMP/ash_tailscale.tar"
