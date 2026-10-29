@@ -11,6 +11,7 @@ defmodule AshTailscale.Headers do
   @words Regex.compile!("\\A#{@word}(?:[ \\t]+#{@word})*\\z")
   @single Regex.compile!(@word)
 
+  @spec parse(term()) :: {:ok, map()} | {:error, :invalid_headers}
   def parse(headers) when is_list(headers) do
     with {:ok, headers} <- collect(headers),
          {:ok, attrs} <- decode_fields(headers),
@@ -36,12 +37,10 @@ defmodule AshTailscale.Headers do
       {key, value}, {:ok, acc} when is_binary(key) and is_binary(value) ->
         key = String.downcase(key)
 
-        if Enum.any?(@fields, &(elem(&1, 0) == key)) do
-          if Map.has_key?(acc, key),
-            do: {:halt, :error},
-            else: {:cont, {:ok, Map.put(acc, key, value)}}
-        else
-          {:cont, {:ok, acc}}
+        cond do
+          not Enum.any?(@fields, &(elem(&1, 0) == key)) -> {:cont, {:ok, acc}}
+          Map.has_key?(acc, key) -> {:halt, :error}
+          true -> {:cont, {:ok, Map.put(acc, key, value)}}
         end
 
       _, _ ->
@@ -91,23 +90,23 @@ defmodule AshTailscale.Headers do
     # Go encodes the whole value. Encoded-looking substrings in raw JSON or
     # display text are data, not a request to recursively decode that data.
     if String.starts_with?(raw, "=?") do
-      if Regex.match?(@words, raw) do
-        Regex.scan(@single, raw, capture: :all_but_first)
-        |> Enum.reduce_while({:ok, []}, fn [charset, encoding, content], {:ok, acc} ->
-          case decode_word(String.downcase(charset), String.downcase(encoding), content) do
-            {:ok, decoded} -> {:cont, {:ok, [decoded | acc]}}
-            _ -> {:halt, :error}
-          end
-        end)
-        |> case do
-          {:ok, parts} -> {:ok, parts |> Enum.reverse() |> IO.iodata_to_binary()}
-          _ -> :error
-        end
-      else
-        :error
-      end
+      if Regex.match?(@words, raw), do: decode_encoded_words(raw), else: :error
     else
       {:ok, raw}
+    end
+  end
+
+  defp decode_encoded_words(raw) do
+    Regex.scan(@single, raw, capture: :all_but_first)
+    |> Enum.reduce_while({:ok, []}, fn [charset, encoding, content], {:ok, acc} ->
+      case decode_word(String.downcase(charset), String.downcase(encoding), content) do
+        {:ok, decoded} -> {:cont, {:ok, [decoded | acc]}}
+        _ -> {:halt, :error}
+      end
+    end)
+    |> case do
+      {:ok, parts} -> {:ok, parts |> Enum.reverse() |> IO.iodata_to_binary()}
+      _ -> :error
     end
   end
 
