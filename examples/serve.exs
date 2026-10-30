@@ -19,6 +19,7 @@ Application.put_env(
   AshTailscale.Example.config(socket, host, secret)
 )
 
+{:ok, _} = Phoenix.PubSub.start_link(name: AshTailscale.Example.PubSub)
 {:ok, _} = AshTailscale.Example.Endpoint.start_link()
 {:ok, {:local, ^socket}} = Bandit.PhoenixAdapter.server_info(AshTailscale.Example.Endpoint, :http)
 File.chmod!(socket, 0o600)

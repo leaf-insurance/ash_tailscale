@@ -2,6 +2,7 @@ defmodule AshTailscale.BrowserSocketTest do
   use ExUnit.Case, async: false
   import Bitwise
   alias AshTailscale.Example.Endpoint
+  alias AshTailscale.Test.WebSocketClient, as: Client
 
   @moduletag capture_log: true
 
@@ -22,6 +23,7 @@ defmodule AshTailscale.BrowserSocketTest do
       AshTailscale.Example.config(socket, @host, @secret)
     )
 
+    start_supervised!({Phoenix.PubSub, name: AshTailscale.Example.PubSub})
     start_supervised!(Endpoint)
     File.chmod!(socket, 0o600)
 
@@ -282,6 +284,52 @@ defmodule AshTailscale.BrowserSocketTest do
 
     assert request(socket, "GET", "/", [{"tailscale-user-name", String.duplicate("a", 67_000)}]).status ==
              431
+  end
+
+  test "LiveView example boots over real Unix WebSocket while writes remain ordinary HTTP", ctx do
+    response = request(ctx.socket, "GET", "/live-demo")
+    assert response.status == 200
+    assert response.body =~ "Read allowed: 0 reports"
+    assert response.body =~ "Signed in as: alice"
+    assert response.body =~ ~s(<form method="post" action="/form">)
+    assert response.body =~ "/assets/phoenix/phoenix.mjs"
+    assert response.body =~ "/assets/live_view/phoenix_live_view.esm.js"
+    assert request(ctx.socket, "GET", "/assets/phoenix/phoenix.mjs").status == 200
+    assert request(ctx.socket, "GET", "/assets/live_view/phoenix_live_view.esm.js").status == 200
+
+    cookie = response |> header("set-cookie") |> String.split(";", parts: 2) |> hd()
+    assert Map.keys(decode_session(cookie)) == ["_csrf_token"]
+    [_, csrf] = Regex.run(~r/name="csrf-token" content="([^"]+)"/, response.body)
+    query = URI.encode_query(%{"_csrf_token" => csrf, "vsn" => "2.0.0"})
+
+    {ws, upgrade} =
+      Client.upgrade(ctx.socket, "/live/websocket?#{query}", [
+        {"host", @host},
+        {"origin", "https://#{@host}"},
+        {"cookie", cookie},
+        {"tailscale-user-login", "bob"},
+        {"tailscale-app-capabilities", "{}"}
+      ])
+
+    assert upgrade.status == 101
+    on_exit(fn -> :gen_tcp.close(ws) end)
+    [tag] = Regex.run(~r/<div[^>]*data-phx-session="[^"]+"[^>]*>/, response.body)
+    [_, id] = Regex.run(~r/ id="([^"]+)"/, tag)
+    [_, session] = Regex.run(~r/data-phx-session="([^"]+)"/, tag)
+    [_, static] = Regex.run(~r/data-phx-static="([^"]*)"/, tag)
+
+    payload = %{
+      "url" => "https://#{@host}/live-demo",
+      "session" => session,
+      "static" => static,
+      "params" => %{}
+    }
+
+    :ok = Client.send_message(ws, ["1", "1", "lv:" <> id, "phx_join", payload])
+    reply = Client.reply(ws, "1")
+    assert reply["status"] == "ok"
+    assert Jason.encode!(reply) =~ "bob"
+    assert Jason.encode!(reply) =~ "Read forbidden"
   end
 
   defp session(socket) do

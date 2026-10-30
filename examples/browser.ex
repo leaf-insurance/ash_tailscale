@@ -45,6 +45,7 @@ end
 
 defmodule AshTailscale.Example.Router do
   use Phoenix.Router
+  import Phoenix.LiveView.Router
 
   pipeline :browser do
     plug(:fetch_session)
@@ -58,6 +59,13 @@ defmodule AshTailscale.Example.Router do
     get("/", AshTailscale.Example.Controller, :index)
     post("/form", AshTailscale.Example.Controller, :create)
     post("/json", AshTailscale.Example.Controller, :create)
+
+    live_session :tailscale,
+      on_mount: [{AshTailscale.LiveView, "/"}],
+      root_layout: {AshTailscale.Example.LiveLayout, :root} do
+      live("/live-demo", AshTailscale.Example.ReportLive)
+      live("/live-other", AshTailscale.Example.ReportLive)
+    end
   end
 end
 
@@ -68,12 +76,9 @@ end
 
 defmodule AshTailscale.Example.Endpoint do
   use Phoenix.Endpoint, otp_app: :ash_tailscale
+  use AshTailscale.LiveView.Endpoint
 
-  # Safe only because the socket accepts connections exclusively from the trusted proxy.
-  plug(Plug.SSL, rewrite_on: [:x_forwarded_proto])
-  plug(Plug.Parsers, parsers: [:urlencoded, :json], pass: [], json_decoder: Jason)
-
-  plug(Plug.Session,
+  @session_options [
     store: :cookie,
     key: "__Host-tailscale_example",
     path: "/",
@@ -81,7 +86,24 @@ defmodule AshTailscale.Example.Endpoint do
     same_site: "Lax",
     secure: true,
     http_only: true
+  ]
+
+  socket("/live", AshTailscale.Example.Socket,
+    websocket: [
+      connect_info: [:peer_data, :x_headers, session: @session_options],
+      check_csrf: true
+    ],
+    longpoll: false
   )
+
+  plug(Plug.Static, at: "/assets/phoenix", from: {:phoenix, "priv/static"})
+  plug(Plug.Static, at: "/assets/live_view", from: {:phoenix_live_view, "priv/static"})
+
+  # Safe only because the socket accepts connections exclusively from the trusted proxy.
+  plug(Plug.SSL, rewrite_on: [:x_forwarded_proto])
+  plug(Plug.Parsers, parsers: [:urlencoded, :json], pass: [], json_decoder: Jason)
+
+  plug(Plug.Session, @session_options)
 
   plug(AshTailscale.Example.Router)
 end
@@ -113,7 +135,9 @@ defmodule AshTailscale.Example do
       adapter: Bandit.PhoenixAdapter,
       server: true,
       url: [scheme: "https", host: host, port: 443],
+      check_origin: ["https://#{host}"],
       secret_key_base: secret_key_base,
+      live_view: [signing_salt: "live-page-integrity"],
       http: [
         ip: {:local, socket_path},
         port: 0,
