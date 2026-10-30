@@ -1,18 +1,21 @@
 # AshTailscale
 
 Authenticate Phoenix browser requests with Tailscale Serve, then authorize Ash
-actions using your application's capability predicates. Each request gets a fresh
-`AshTailscale.User`: no user database, provisioning, lookup, tokens, or session
-identity. The library supplies its own resource, domain and authentication strategy;
+actions using your application's capability predicates. Ordinary browser routes get
+a fresh `AshTailscale.User` per request: no user database, provisioning, lookup,
+library identity tokens, or session identity. The library supplies its own resource, domain and authentication strategy;
 you do not configure an Accounts domain or add a strategy to your user resource.
 
 **Supported:** Tailscale 1.94+ HTTP proxy → private Unix socket → Phoenix browser
 HTML/JSON routes with session/CSRF protection, plus optional
-[root LiveView integration](docs/live_view.md). LiveView permissions last until a
-new WebSocket connection and can remain stale indefinitely, for reads and writes.
-No backend HTTP TCP listener, Funnel, longpoll, headless APIs, or optional authentication. Tagged clients have no human
-login and are rejected. Identified shared-device visitors are not necessarily
-members of your tailnet.
+[root LiveView integration](docs/live_view.md) with normal WebSocket/longpoll fallback.
+Permissions belong to the original logical transport, not each poll. There is no
+library TTL: reads and writes can remain stale indefinitely on an open WebSocket.
+See the guide's per-request Unix boundary and shared transport-token context rules.
+No backend HTTP TCP listener, Funnel, headless APIs, or optional authentication.
+Tagged clients have no human login and cannot authenticate ordinary browser routes
+or new logical transports; native longpoll tokens resume existing authority. Identified
+shared-device visitors are not necessarily members of your tailnet.
 
 ## 1. Install in an existing Phoenix/Ash application
 

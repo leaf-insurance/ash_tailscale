@@ -191,10 +191,14 @@ conn =
   |> Plug.Conn.put_req_header("tailscale-user-login", "alice@example.com")
 ```
 
-`Phoenix.ConnTest.build_conn()` can replace the first line, but still needs the
-same `put_peer_data` and header calls before dispatch. Unsafe methods also need
-session/CSRF. This simulates transport, not isolation or Serve. For policy tests,
-use `AshTailscale.test_actor!/2`.
+`Phoenix.ConnTest.build_conn()` can replace the first line, but every new/recycled
+request must carry the simulated peer and canonical headers. Recycle **before**
+applying them; see the [ConnTest and LiveViewTest recipes](live_view.md#in-process-request-tests).
+The optional LiveView wrapper makes the **whole endpoint Unix-only**, including
+static assets, public routes and health checks: TCP returns 403 even outside
+`/live`. Unsafe methods also need session/CSRF. This is test-adapter simulation,
+not real isolation or Serve evidence, and never a production bypass. For policy
+tests, use `AshTailscale.test_actor!/2`.
 
 ### Repository demo (not production)
 
@@ -202,9 +206,11 @@ Examples compile only in `MIX_ENV=test`, using disposable ETS data. Static HEEx
 shows the assigned identity with automatic escaping; the separate write/CSRF form
 is **not a login step**. `/live-demo` adds the optional
 [LiveView read UI](live_view.md); writes still use fresh CSRF-protected HTTP
-requests. LiveView permissions are a handshake snapshot and can remain stale
-indefinitely until a new WebSocket connection. Follow the integration guide when
-adding LiveView to a consumer; the HTTP pipeline alone does not protect sockets.
+requests. Standard WebSocket/longpoll fallback is enabled. Permissions belong to
+the original logical transport, not each poll; open WebSockets can retain stale
+read/write permissions indefinitely. Follow the integration guide's per-request
+Unix guard and shared-token-context requirements when adding LiveView; the HTTP
+pipeline alone does not protect socket transports.
 
 ```sh
 umask 0077

@@ -3,12 +3,13 @@
 Maintainer reference, not the consumer onboarding guide. Start with the
 [quickstart](../README.md) and [setup guide](deployment.md).
 
-Status: implemented; 34 agent-run automated tests and local socket checks passed.
+Status: implemented; the initial HTTP slice passed 34 agent-run automated tests
+and local socket checks. Later tooling/LiveView milestones are recorded below.
 The user subsequently reported passing the agreed manual live Serve/tailnet smoke
 checklist for their own setup; agents did not directly observe that deployment.
 No package publication, release tag or broader production-readiness guarantee.
 Research and stable dependency compatibility checked 2026-10-29. The approved
-scope below is unchanged; API examples reflect the working implementation.
+scope now includes the optional root LiveView/fallback integration described below.
 See [validation](validation.md) for agent-tested versions, byte bounds,
 user-reported live results and remaining coverage limits; see [setup](deployment.md)
 for the current consumer recipe.
@@ -20,7 +21,7 @@ Tailscale already provides, and authorize Ash actions using application
 capabilities from tailnet grants.
 
 **No persisted users. No provisioning, user lookup, or account mapping.**
-No OAuth flow, password form, or application-issued authentication token.
+No OAuth flow, password form, or library-issued identity token.
 
 ```text
 Tailnet client
@@ -30,8 +31,9 @@ Tailnet client
   → Ash policies
 ```
 
-Every request builds a fresh actor. The headers are the source of identity;
-capabilities are permissions for that request, not permanent roles.
+Every ordinary HTTP authentication builds a fresh actor. Headers are the source of
+identity; capabilities are request permissions, not permanent roles. Optional
+LiveView instead retains its initial logical-transport snapshot.
 
 The first release supports one topology and one integration: **Serve's HTTP proxy
 → private Unix socket → Phoenix browser routes with session/CSRF protection**.
@@ -40,9 +42,11 @@ and capability-only tagged clients remain out of scope.
 
 **Owner-approved LiveView milestone:** optional router-mounted root LiveViews use
 the same ingress, with a required pre-dispatch bridge and independent socket/mount
-authentication. The owner chose permissions until a new actual WebSocket connection,
-not expiry. Same-transport rejoin/remount/navigation retain the snapshot; read and
-write permissions can remain stale indefinitely. See [the integration guide](live_view.md).
+authentication. The owner chose permissions until a new logical transport, not
+expiry. Native longpoll fallback is supported; repeated polls/pushes and same-transport
+rejoin/remount/navigation retain the snapshot. Read and write permissions can remain
+stale indefinitely on open WebSockets; native longpoll transport lifetimes apply.
+See [the integration guide](live_view.md), including shared-token-context requirements.
 
 ## What Tailscale provides
 
@@ -296,9 +300,9 @@ input and invalid/empty logins. Optional display decoding failures yield nil,
 without relaxing any raw/decoded byte limits. UTF-8, underscores, and split words
 are tested against fixtures produced by Go's encoder.
 
-## Phoenix scope: browser HTTP only
+## Phoenix scope: browser routes and optional root LiveView
 
-Authenticate every request from its current headers. Use the session/CSRF pipeline
+Authenticate every ordinary browser request from its current headers. Use the session/CSRF pipeline
 shown above for HTML and browser-driven JSON alike. Forms use Phoenix's normal
 CSRF token; browser JSON clients send it in `x-csrf-token` on unsafe requests.
 The endpoint session setup, token delivery, and rejected cross-site requests must
@@ -309,17 +313,27 @@ an API does not protect it. Do not introduce custom `Origin` or `Sec-Fetch-Site`
 validation, a CSRF opt-out, or a headless-client bypass in v0.1. Headless API
 integration is out of scope. GET/HEAD routes must not perform mutations.
 
-LiveView's handshake bypasses normal endpoint/router plugs, and subsequent events
-have no fresh headers. Phoenix's standard `connect_info: [:x_headers]` does not
-include `Tailscale-*`. [Socket docs][phoenix] The optional integration installs a
-required pre-dispatch `call/2` wrapper, strips client-supplied bridge headers and
-copies canonical assertions only for actual Unix peers. Socket/mount validation
-requires that integration, Unix peer metadata and valid headers; origin/session
-CSRF remain enabled. No session/params/page-token identity fallback is permitted.
-The owner explicitly chose **no assertion expiry/revalidation until a new actual
-WebSocket connection**. Do not claim immediate or bounded socket policy revocation;
-components and asynchronous work using that actor have the same snapshot semantics.
-The example keeps revocation-sensitive writes on fresh CSRF-protected HTTP routes.
+LiveView's transports bypass normal endpoint/router plugs. Phoenix's standard
+`connect_info: [:x_headers]` does not include `Tailscale-*`. [Socket docs][phoenix]
+The required pre-dispatch `call/2` wrapper strips client-supplied bridge headers,
+rejects non-Unix requests with HTTP 403 before dispatch, and copies canonical
+assertions only for actual Unix peers. New socket/mount validation requires that
+integration, Unix metadata and valid headers; normal session/CSRF validation runs
+on new logical transports. Origin checks remain enabled on all transport requests.
+No session/params/page-token identity fallback is permitted.
+
+Longpoll's native opaque transport token resumes existing server/connect-info
+state without rerunning socket connect or session/CSRF extraction. Poll/push
+headers do not refresh identity or permissions. All entrypoints capable of resuming
+the same signing/PubSub context must enforce the Unix boundary or be isolated;
+an unbridged shared-context entrypoint is **unsafe/unsupported**, not protected by
+the marker on another endpoint. These are native bearer transport tokens, not
+library identity tokens or fresh Serve assertions.
+
+The owner chose **no library assertion expiry/revalidation until a new logical
+transport**. Do not claim immediate or bounded policy revocation; components and
+asynchronous work using that actor have the same snapshot semantics. The example
+keeps revocation-sensitive writes on fresh CSRF-protected HTTP routes.
 
 ## Implemented slice
 

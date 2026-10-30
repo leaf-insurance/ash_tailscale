@@ -1,103 +1,54 @@
 # Optional LiveView integration
 
-This integration supports **router-mounted root LiveViews over WebSockets**, behind
-Tailscale Serve 1.94+ and the same private Unix socket as HTTP. LiveComponents may
-receive the authenticated root actor explicitly. Nested/sticky LiveViews, longpoll,
-Funnel, backend HTTP TCP listeners and session-based identity are not supported.
+These are the changes to an **existing generated Phoenix application** for
+router-mounted root LiveViews, with standard WebSocket/longpoll fallback. Keep the
+[Unix-only ingress and browser setup](deployment.md): private socket, trusted Serve,
+`__Host-` cookie (Secure, HttpOnly, Path=/, no Domain), and protected browser routes.
+Nested/sticky LiveViews, Funnel and backend HTTP TCP listeners remain unsupported.
 
-## Permissions last until a new WebSocket connection
+## 1. Endpoint and custom socket
 
-The initial HTTP render uses that GET's assertion. Connected mounts use the
-**WebSocket upgrade's** identity and capability snapshot, independently of the GET.
-Only a **new actual WebSocket connection** gets new headers from Serve. This
-updates that connection's actor; it does not revoke other open connections,
-existing actor copies or already-started work.
+The optional dependency is `{:phoenix_live_view, "~> 1.2.13"}`, supplying Phoenix/HTML
+transitively. HTTP-only consumers need not install it; if an app already depends on
+LiveView, that constraint still applies even when only using our HTTP plug. The
+tested stack is Phoenix 1.8.16 / LiveView 1.2.13, not untested older LiveView versions.
 
-Channel rejoin, remount after a view crash, live navigation and live patch on the
-same transport do **not** refresh permissions. Reconstructing an actor at mount
-is not a new assertion. Read **and write** permissions can remain stale indefinitely;
-there is no TTL, revocation watcher or maximum connection age. An idle timeout is
-not an authentication lifetime: heartbeats/activity can keep a connection open.
-
-Authorize every sensitive operation with Ash, but understand that re-running the
-capability predicate checks the stored handshake snapshot, not current tailnet
-grants. Explicitly passed component actors, `handle_info`, `handle_async`, queued
-or delayed work using that actor have the same limitation. Do not persist actors
-in jobs/caches or treat them as fresh request authority. Already delivered data
-cannot be revoked by disconnecting.
-
-If that lifetime is unsuitable for a read or write, perform it through a fresh
-CSRF-protected HTTP request instead. The example deliberately keeps writes on the
-existing `/form` and `/json` HTTP routes. A full page reload normally creates a new
-connection; merely navigating within a LiveView session does not.
-
-## 1. Dependencies and endpoint
-
-Add `{:phoenix_live_view, "~> 1.2.13"}` to the consumer's dependencies (normally
-already present in a generated Phoenix application). LiveView is the library's
-only optional dependency and supplies Phoenix/HTML transitively. HTTP-only
-consumers need not install LiveView. If an application already depends on LiveView,
-the declared `~> 1.2.13` constraint still applies, even if it only uses our HTTP plug.
-The tested integration uses Phoenix 1.8.16 / LiveView 1.2.13; older LiveView versions
-are not claimed to be compatible.
-
-Keep the [Unix-only endpoint, session and deployment configuration](deployment.md).
-Install the endpoint bridge and replace the generated `/live` socket declaration:
+After `use Phoenix.Endpoint`, install the bridge. Replace the generated `/live`
+socket declaration, keeping its existing `@session_options`:
 
 ```elixir
-defmodule MyAppWeb.Endpoint do
-  use Phoenix.Endpoint, otp_app: :my_app
-  use AshTailscale.LiveView.Endpoint
+use AshTailscale.LiveView.Endpoint
 
-  @session_options [
-    store: :cookie,
-    key: "__Host-my_app",
-    signing_salt: "csrf-ui-only",
-    path: "/",
-    secure: true,
-    http_only: true,
-    same_site: "Lax"
-  ]
+@connect_info [:peer_data, :x_headers, session: @session_options]
 
-  socket "/live", MyAppWeb.TailscaleSocket,
-    websocket: [
-      connect_info: [:peer_data, :x_headers, session: @session_options],
-      check_csrf: true,
-      check_origin: ["https://reports.your-tailnet.ts.net"]
-    ],
-    longpoll: false
-
-  # Retain your other normal endpoint plugs, then:
-  plug Plug.Session, @session_options
-  plug MyAppWeb.Router
-end
+socket "/live", MyAppWeb.TailscaleSocket,
+  websocket: [connect_info: @connect_info],
+  longpoll: [connect_info: @connect_info]
 ```
 
-Replace the origin with the **exact public HTTPS origin**, not the Unix backend
-host. Do not disable origin/CSRF checks. `check_origin: :conn` is inappropriate
-without additional consideration: Serve's Unix proxy rewrites backend Host to
-localhost. Retain your endpoint `live_view: [signing_salt: ...]` configuration and
-supervised Phoenix PubSub; these support Phoenix page integrity, not identity.
+Longpoll must have the **same connect info** as WebSocket. Simply deleting
+`longpoll: false` is insufficient: `Phoenix.Endpoint.socket/3` defaults it off.
+Phoenix's generator enables it explicitly, as above. Keep the generated LiveSocket
+`longPollFallbackMs: 2500` option; the repository demo uses the same value. This is
+a fallback delay, not a permission lifetime.
 
-**Why an endpoint macro rather than a plug?** Phoenix dispatches socket requests
-before ordinary endpoint/router plugs. The bridge wraps the documented Plug
-`call/2` / `super` chain before that dispatch. Its final before-compile wrapper
-also surrounds ordinary consumer `call/2` overrides. Do not override the final
-wrapper or integration marker from a later before-compile callback, or route
-upgrades around the endpoint.
+Keep the generated session/CSRF pipeline, CSRF meta tag and client `_csrf_token`
+parameter, plus the endpoint signing salt and supervised PubSub. Phoenix validates
+session/CSRF when creating a **new logical transport**; do not disable its default
+checks. No extra `check_csrf: true` or custom CSRF code is needed.
 
-The bridge strips **all** incoming `x-ash-tailscale-*` headers on every request,
-then copies only canonical Serve assertion headers on an actual Unix connection.
-Duplicates and values remain intact for strict parsing. These internal headers
-are not independently trusted: the socket and mount helpers also require the
-installed endpoint integration and real Unix peer metadata. A missing integration
-fails closed: socket validation returns `:error`, and the standard mount hook raises
-a clear `ArgumentError`. Redirecting a client cannot repair this configuration error.
-The marker is a trusted-code configuration invariant, not a signature;
-application code must not bypass/forge it. The bridge does not authenticate or
-move HTTP authentication ahead of session/CSRF protection.
+Configure the **exact public HTTPS origin**, retaining the setup guide's HTTPS URL:
 
-## 2. Socket and root mount
+```elixir
+config :my_app, MyAppWeb.Endpoint,
+  check_origin: ["https://reports.your-tailnet.ts.net"]
+```
+
+Do not use `check_origin: :conn` here: Serve's Unix proxy rewrites backend Host to
+localhost. Do not disable origin checks.
+
+Keep a custom socket so invalid assertions are rejected **before any channel**
+can be opened, on WebSocket upgrade or new longpoll transport creation:
 
 ```elixir
 defmodule MyAppWeb.TailscaleSocket do
@@ -111,88 +62,175 @@ defmodule MyAppWeb.TailscaleSocket do
 end
 ```
 
-This rejects invalid handshake assertions before upgrade. Params, cookies and
-signed page tokens never supply identity or capabilities. Session validation is
-still mandatory for CSRF. `id/1` deliberately does not introduce a session user ID
-or a per-user logout/disconnect mechanism.
+Ordinary endpoint/router plugs run too late for socket dispatch. The bridge wraps
+Plug's `call/2` / `super`, strips all incoming `x-ash-tailscale-*` headers, then
+copies only canonical Serve assertions, preserving duplicates and values. It
+rejects non-Unix requests with HTTP 403 **before dispatch**, including resumed
+longpoll GETs/POSTs. This is transport enforcement, not a replacement identity or
+CSRF system. The **whole endpoint is Unix-only**, not just `/live`: static assets,
+public routes and health checks also return HTTP 403 over TCP. The standalone HTTP
+plug's behavior is unchanged.
 
-Keep the existing session/CSRF/security-header/authentication browser pipeline and
-apply the required hook to every protected live session:
+Do not override the final wrapper/marker from a later before-compile callback or
+route socket traffic around it. A Unix peer does not prove the caller is Serve;
+private filesystem permissions and trusted host/application code remain essential.
+
+## 2. Required root mount hook
+
+Keep `AshTailscale.Plug` after session/CSRF protection on the browser pipeline, and
+add the hook to every protected live session:
 
 ```elixir
-# MyAppWeb.Router
-import Phoenix.LiveView.Router
-
-scope "/", MyAppWeb do
-  pipe_through :tailscale # fetch_session, protect_from_forgery,
-                         # put_secure_browser_headers, AshTailscale.Plug
-  get "/", PageController, :home # ordinary HTTP controller failure destination
-
-  live_session :tailscale, on_mount: [{AshTailscale.LiveView, "/"}] do
-    live "/reports", ReportLive
-  end
+live_session :tailscale, on_mount: [{AshTailscale.LiveView, "/"}] do
+  live "/reports", ReportLive
 end
 ```
 
-The hook replaces `current_user` on disconnected and connected root mounts; it
-never falls back to existing assigns, `assign_new`, parent state or session
-identity. **Run it after any other hook assigning `current_user`.** Later hooks may
-read the actor, but no later identity/session loader may overwrite it, including
-loaders in LiveView-module hooks or `mount/3`.
+Here `/` must be an **ordinary protected HTTP controller route**, not another
+LiveView using this hook. Invalid identity clears `current_user` and redirects
+there; unauthenticated HTTP requests receive 401 from `AshTailscale.Plug`. Missing
+bridge integration instead raises a clear configuration `ArgumentError`; redirecting
+cannot repair it. `assign_actor/1` supports custom failure handling by returning
+`{:error, socket}` with the actor cleared, including when integration is missing.
 
-For invalid identity, its argument (`"/"` here) is an application-chosen **ordinary
-protected HTTP controller route**, not another LiveView using this hook.
-`AshTailscale.Plug` returns 401 if the redirected HTTP request is unauthenticated.
-Do not use an unprotected view or another hooked LiveView as the failure destination;
-even an ordinary HTTP redirect to that LiveView can loop. Missing integration
-raises a configuration error instead of redirecting.
+Session/CSRF is gated by the **required custom socket connect callback** at logical
+transport creation, not rechecked at mount. Mounts independently validate the
+marker, actual peer and assertions through documented connect-info accessors.
+The mount hook is not a substitute for the socket callback.
 
-`AshTailscale.LiveView.assign_actor/1` is available for a consumer's own failure
-handling: it returns `{:error, socket}` with `current_user` cleared even when the
-bridge is missing. Do not install the root hook on nested/sticky LiveViews.
+**Run this hook after other hooks assigning `current_user`.** Later hooks may read
+it, but no later identity/session loader (including module hooks or `mount/3`) may
+overwrite it. No `assign_new`, session, params or page-token identity fallback is used.
 
-Continue passing the actor to Ash explicitly:
+Pass `actor: socket.assigns.current_user` into every Ash operation and authorize
+every sensitive action. Use the same opaque capabilities and consumer MFA policies
+as HTTP: only literal `true` authorizes, and predicate errors deny. LiveComponents
+may receive this root actor explicitly and pass it to their own Ash operations.
+Do not install the root hook on nested/sticky LiveViews.
+
+## 3. Permissions belong to the logical transport
+
+The disconnected render uses its GET assertion. Connected mounts use the assertion
+from the **WebSocket upgrade or initial longpoll transport-creation GET**, not the
+page's cookie/session/params. Only a **new logical transport** gets new authority.
+
+Repeated longpoll HTTP polls/pushes are **not reconnects**, even if Serve sends new
+identity or capabilities on each request. Channel rejoin, remount, navigation and
+patch also retain the original snapshot. Reconstructing an actor is not a refresh.
+Reads **and writes** can remain stale for the transport's lifetime. The library
+adds no TTL/revocation framework; WebSockets can remain open indefinitely. Phoenix's
+native longpoll inactivity and transport-token lifetime still apply, not an
+application-level permission freshness guarantee.
+
+Components, `handle_info`, `handle_async`, queued/delayed work and actor copies have
+the same snapshot limitation. A new transport does not revoke other transports or
+already-started work. Do not persist actors into jobs/caches as fresh authority.
+When this lifetime is unsuitable for a read or write, use a fresh CSRF-protected
+HTTP request instead. The example keeps writes on `/form` and `/json` for this reason.
+
+### Native longpoll token and installation invariant
+
+Phoenix returns an opaque signed **transport token**, not a library-created
+identity token. It locates an existing server and its original connect info.
+Treat it as a bearer secret: do not expose/log its URL or value. The installed
+Phoenix client sends it in the query string; the server also accepts the
+`x-phoenix-longpoll-token` header.
+
+A valid token resumes that server **without** rerunning `connect/3`, session/CSRF
+extraction or identity validation. Cookies and fresh headers are not required for
+resumption; the original authority is retained. **Any holder of a valid token who
+can reach the service—including another tailnet user replaying it through Serve—
+can resume the original actor, regardless of the current Serve identity.** There
+is no per-poll human-identity binding. This is why leaking the bearer token matters,
+even when all ingress is correctly routed through Serve and the Unix socket.
+Origin checks still run on every request, and the endpoint wrapper independently
+enforces Unix transport before Phoenix can resume anything. Tampered/unusable tokens cannot inject identity;
+creating a replacement server requires fresh authentication and normal session/CSRF.
+An invalid/foreign token on GET may therefore create a new logical transport rather
+than simply fail. Native JSON-versus-HTTP status details are in the validation record.
+
+**Every HTTP entrypoint capable of resuming tokens in the same signing/PubSub
+context must enforce this boundary, or use isolated signing credentials/PubSub.** A token issued
+through a correctly bridged endpoint can resume through an unbridged endpoint
+sharing that context. Resumption does not rerun the custom socket callback; even a
+subsequent channel mount validates the **original** endpoint/connect info, not the
+current HTTP entrypoint. Neither helper can detect that missing wrapper. This is an **UNSAFE,
+unsupported configuration**, not a promise that missing integration fails closed on
+every poll. The marker is an installation invariant, not a cryptographic per-request
+attestation. Keep the custom socket: it still gates all new logical transports,
+including those that can open upload channels.
+
+## In-process request tests
+
+Every **new or recycled** ConnTest/LiveViewTest request connection must carry a
+simulated Unix peer. Apply it to the current request, not an older connection.
+Phoenix 1.8.16 recycling and Plug 1.20.3 dispatch preserve existing peer data, but
+fresh connections default to TCP and recycling drops canonical assertion headers
+by default. Recycle **before** setting peer data and headers:
 
 ```elixir
-Ash.read(MyApp.Reports.Report, actor: socket.assigns.current_user)
+# Inside a test module using your generated MyAppWeb.ConnCase.
+defp tailscale_conn(conn) do
+  conn
+  |> Phoenix.ConnTest.ensure_recycled()
+  |> Plug.Test.put_peer_data(%{address: {:local, ""}, port: 0, ssl_cert: nil})
+  |> Plug.Conn.put_req_header("tailscale-user-login", "alice@example.test")
+  |> Plug.Conn.put_req_header("tailscale-app-capabilities", "{}")
+end
+
+setup %{conn: conn}, do: {:ok, conn: tailscale_conn(conn)}
+
+test "initial and subsequent HTTP renders", %{conn: conn} do
+  response = get(conn, "/reports")
+  assert response.status == 200
+
+  next_response = response |> tailscale_conn() |> get("/reports")
+  assert next_response.status == 200
+end
 ```
 
-Use the same `AshTailscale.CapabilityCheck` and consumer MFA policies as HTTP.
-Capabilities stay opaque JSON; only literal predicate `true` authorizes and
-predicate errors deny. Components must receive the actor from the root explicitly
-and pass it to their own Ash operations. Do not trust client event payloads or
-apply `Ash.PlugHelpers` to a LiveView socket.
+Use your application's route and usual canonical test assertions; `{}` grants no
+capabilities. Repeat preparation for each newly built/recycled request, including
+redirect-following helpers. This is **test-adapter simulation**, not evidence of
+real Unix isolation, Serve assertions or transport CSRF. Never add a production
+bypass for tests; retain real wire tests for those boundaries.
 
-## 3. Browser connection and example
+For standard connected LiveViewTest, keep its normal test-only dependency
+(e.g. `{:lazy_html, "~> 0.1.0", only: :test}`). With the same setup/helper above:
 
-Retain the normal CSRF meta tag and pass its token to LiveSocket. **Remove generated
-`longPollFallbackMs` and any explicit LongPoll transport configuration**; setting
-only the server's `longpoll: false` is not a working fallback strategy.
+```elixir
+import Phoenix.LiveViewTest
 
-```javascript
-const csrfToken = document.querySelector("meta[name='csrf-token']").content
-const liveSocket = new LiveSocket("/live", Socket, {params: {_csrf_token: csrfToken}})
-liveSocket.connect()
+test "connected root LiveView", %{conn: conn} do
+  {:ok, _view, _html} = live(conn, "/reports")
+
+  response = get(conn, "/reports")
+  {:ok, _view, _html} = live(response)
+
+  {:ok, _view, _html} = response |> tailscale_conn() |> live("/reports")
+end
 ```
 
-The [repository launcher](deployment.md#repository-demo-not-production) serves
-`/` as the original static HEEx/HTTP demo and `/live-demo` as the optional LiveView
-demo. `examples/live_view.ex` includes the root layout, client wiring, read event
-and normal HTTP write form. It uses bundled dependency JS assets only for this
-small repository demo; consumers keep their usual asset build. Identity text is
-escaped by HEEx; never use `raw` or trust profile URLs.
+`live/2` issues a GET; `live/1` uses the already-bridged HTTP response, so do **not**
+recycle between that GET and `live/1`. Prepare a recycled conn only for a new
+request. No private connect-info override is needed: mount uses the supported
+peer/header accessors, not `get_connect_info(:session)`.
 
-## Validation boundary
+These tests cover connected actors, components and application policies, **not**
+the real socket connect callback, session/CSRF handshake or Unix transport
+boundary. Keep the custom socket and the real wire regressions; a passing
+LiveViewTest does not prove wire security.
 
-Automated tests exercise actual Bandit Unix and TCP HTTP/WebSocket dispatch,
-origin/session/CSRF, canonical/internal header spoofing, duplicates and malformed
-assertions, GET-to-upgrade identity changes, real reconnect versus same-transport
-channel rejoin/navigation, component actors, Ash policies and HTML escaping.
-The WebSocket tests use a small wire client, **not a browser or real Tailscale Serve**.
-A separate fresh production consumer checks that HTTP-only compilation/runtime
-works with no Phoenix/LiveView present. Maintainer evidence is in
-[the repository validation record](https://github.com/leaf-insurance/ash_tailscale/blob/main/docs/validation.md).
+## Example and validation
 
-Operators must still verify their real Serve/TLS/browser boundary and test grant
-changes both before and after an actual reconnect. No host services, Tailscale
-configuration or live endpoints were changed by the automated tests.
+The [repository demo](deployment.md#repository-demo-not-production) keeps `/` as
+the static HEEx/HTTP page and `/live-demo` as the LiveView read UI with standard
+fallback and an ordinary HTTP write form. Consumers keep their normal asset build;
+`examples/live_view.ex` uses dependency JS assets only for this small demo.
+
+Automated tests use real Bandit Unix/TCP listeners and WebSocket/longpoll wire
+clients, including valid-token replay over accidental TCP, origin/session/CSRF,
+spoofed assertions, shared-context hazards, reconnect/rejoin semantics, policies
+and escaping. They are **not browser JS, real Serve, TLS or live grant-propagation
+tests**. Those operator checks remain open. See the repository
+[validation record](https://github.com/leaf-insurance/ash_tailscale/blob/main/docs/validation.md).

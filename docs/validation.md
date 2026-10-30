@@ -305,11 +305,12 @@ owner setup; see [maintenance](maintenance.md).
 
 ## Optional root LiveView milestone
 
-The owner chose **permissions until a new actual WebSocket connection**, with no
+The owner chose **permissions until a new logical transport**, with no library
 TTL/expiry framework. Same-transport channel rejoin, remount, navigation and patch
-retain the original assertion. Read and write permissions can remain stale
+retain the original assertion. Open WebSockets can retain stale read/write permissions
 indefinitely, including explicitly passed component actors and asynchronous work.
-The example keeps revocation-sensitive writes on CSRF-protected HTTP routes.
+The example keeps revocation-sensitive writes on CSRF-protected HTTP routes. The
+subsequent native longpoll extension is recorded below; polling is not reconnecting.
 
 Installed Phoenix 1.8.16 / LiveView 1.2.13 source and upstream Serve v1.94.0 were
 reviewed before implementation. Phoenix dispatches upgrades before normal plugs;
@@ -321,13 +322,13 @@ The marker is a trusted-code installation invariant, not a signature. Later
 before-compile overrides/bypassing the final wrapper are unsupported; ordinary
 consumer `call/2` overrides are covered by the final wrapper and tested.
 
-The expanded suite is **53 tests + 3 doctests**, including actual Bandit Unix/TCP
+The reviewed WebSocket milestone had **53 tests + 3 doctests**, including actual Bandit Unix/TCP
 WebSocket HTTP upgrade and Phoenix channel wire messages, not just LiveViewTest:
 
 - Valid origin, session and CSRF upgrade; foreign origin, missing/forged cookie,
   missing/bad CSRF, malformed assertions, duplicates and over-limit login/name reject.
 - Internal-prefix spoofing cannot replace canonical assertions or a missing login;
-  missing endpoint integration rejects even on Unix. Independent disconnected and
+  missing endpoint integration rejects new transports even on Unix. Independent disconnected and
   connected mount tests verify a clear configuration `ArgumentError` from the
   standard hook and a cleared, non-authorizing actor from `assign_actor/1`. The
   real unbridged dead render is generic HTTP 500, not a redirect loop; invalid
@@ -374,7 +375,7 @@ assigners and forbids later identity/session loaders from overwriting it. The
 failure destination must be a protected ordinary HTTP controller, never another
 LiveView using the hook; the fixtures now use a dedicated controller path. Tests/workflows/build products are not shipped in the archive.
 
-Latest correction evidence: `/tmp/ash-ts-liveview-delta-1.20.log`,
+WebSocket milestone correction evidence: `/tmp/ash-ts-liveview-delta-1.20.log`,
 `/tmp/ash-ts-liveview-delta-1.18.log`, `/tmp/ash-ts-liveview-prod-1.20.log`,
 `/tmp/ash-ts-liveview-prod-1.18.log`, `/tmp/ash_tailscale-liveview-delta-1.20.tar`,
 and `/tmp/ash_tailscale-liveview-delta-1.18.tar`. The production-with-LiveView
@@ -387,6 +388,187 @@ Actionlint and diff whitespace checks pass. Hosted Actions have not been run.
 upgrade/header sanitization, real TLS and live grant changes/reconnects still need
 operator validation. The earlier user-reported Tailscale checks and isolated
 systemd evidence concern the HTTP/static slice, not this new integration. No host
-services, Tailscale configuration or live endpoints were changed. No new commit,
-push, tag or publication is authorized by this validation; independent review is
-still required.
+services, Tailscale configuration or live endpoints were changed. That milestone
+was subsequently reviewed and committed through `f72a0c8`; the longpoll and
+compatibility follow-ups received separate review, recorded below. No push, tag
+or publication has been authorized.
+
+## Native longpoll fallback extension
+
+The owner approved standard Phoenix fallback while retaining the custom socket's
+new-transport authentication gate. Phoenix 1.8.16 generator templates explicitly
+configure longpoll with session connect info and `longPollFallbackMs: 2500`; the
+example now does that, sharing `:peer_data`, `:x_headers` and session options between
+transports. Redundant `check_csrf: true` was removed, **not** Phoenix's default CSRF
+validation. The guide is now generated-app deltas rather than repeated session,
+CSRF and client boilerplate.
+
+Source review of Phoenix's longpoll transport/server/client established that valid
+tokens resume an existing server **before** connect-info extraction or `connect/3`.
+The minimal hardening is in the existing endpoint wrapper: strip reserved headers,
+then reject any non-Unix peer with generic **actual HTTP 403**, returning the halted
+connection without calling `super`. This applies to every request, not just initial
+connections. The standalone `AshTailscale.Plug` remains unchanged; ordinary TCP
+requests to an endpoint using the optional wrapper now receive 403 rather than the
+HTTP plug's later 401. No custom transport, token/signature, identity or TTL system.
+
+Native Phoenix envelope status and HTTP status are distinct:
+
+| Real Unix protocol case | HTTP status | JSON `status` |
+| --- | --- | --- |
+| New logical transport | 200 | 410 (with new token) |
+| Successful push / poll with messages | 200 | 200 |
+| Empty poll | 200 | 204 |
+| New transport authentication/session/CSRF rejection, or bad origin | 200 | 403 |
+| POST with an unusable token | 200 | 410 |
+
+The Unix guard instead returns actual HTTP 403/plain `Forbidden`, before Phoenix
+can dispatch/resume. On GET, invalid/foreign tokens can create a **new** transport
+when fresh assertions/session/CSRF validate; they do not necessarily hard-fail.
+
+Thirteen additional real Bandit wire tests cover:
+
+- Initial GET/token, empty poll, NDJSON push/replies, header/query token forms,
+  origin host/scheme/port on initial and resumed requests, session/CSRF rejection
+  on new transports, malformed/duplicate/oversized assertions and reserved-prefix
+  spoofing. Responses assert HTTP status separately from JSON envelope status.
+- A Unix-issued valid token replayed via accidental TCP for GET/POST/OPTIONS,
+  including a valid event push. A test-only outer Plug forges `remote_ip` **before**
+  the endpoint; canonical/internal/forwarded headers are also supplied. All fail
+  with actual HTTP 403, no event is dispatched, and the original Unix server remains
+  usable. This tests resumed tokens, not merely initial TCP connects.
+- Initial A and later B headers retain A on polls, pushes, channel rejoin and live
+  navigation, including component actors and write permission. A new logical server
+  uses B. Normal endpoint shutdown/draining followed by reconnect also gets B.
+  Missing later cookies/identity or bad later CSRF does not refresh/reject an already
+  valid bearer-token transport: native resumption retains the original authority.
+- Invalid/foreign token GETs with valid fresh B credentials create B, never restore
+  A; missing session or identity still rejects. Creating a replacement does not
+  modify/revoke the original server. The token is Phoenix's native bearer transport
+  secret, not a library identity token or a new assertion.
+- **UNSAFE configuration reproduction, not a passing security guarantee:** a token
+  issued over the bridged Unix endpoint resumes through an **unbridged** endpoint
+  sharing signing key/PubSub, even over TCP. Its new connects reject (including
+  forged internal headers), but token resumption bypasses that callback. A later
+  channel mount still validates the original endpoint/connect info and retains A.
+  All HTTP entrypoints capable of resuming that context must enforce the boundary,
+  or isolate signing credentials/PubSub. Different-key token reuse is rejected on
+  POST; an isolated bridged context can only create a freshly authenticated server
+  on GET. The marker does not attest to every poll's entrypoint.
+- The executable example enables standard fallback and mounts over native longpoll.
+  Existing WebSocket, HTTP, cookie/CSRF, escaping, policy and optional-dependency
+  regressions continue to pass. The early custom socket still gates new transports
+  before any channel; no upload/transport internals were replaced.
+
+Both supported toolchains pass **66 tests + 3 doctests**, **94 checks across 30
+files**, dev/test formatting and forced project warnings-as-errors compilation,
+docs warnings-as-errors, local package builds, and fresh HTTP-only and with-LiveView
+production consumer checks. Upstream dependency warnings are separated from project
+compilation; the library compiles without warnings with or without LiveView.
+Actionlint and diff whitespace checks pass. Dependency lock, core HTTP plug and
+CI/release workflows are unchanged.
+
+Evidence: `/tmp/ash-ts-longpoll-1.20.log`, `/tmp/ash-ts-longpoll-1.18.log`,
+`/tmp/ash_tailscale-longpoll-1.20.tar`, `/tmp/ash_tailscale-longpoll-1.18.tar`.
+Fresh with-LiveView fixtures: `/tmp/ash-ts-longpoll-prod-1.20.VjFtKb` and
+`/tmp/ash-ts-longpoll-prod-1.18.44e6Xq`.
+
+**Still not validated:** browser JS execution/automatic fallback, real Serve/TLS,
+live grant propagation or a new systemd deployment. Headers are simulated over real
+local wire transports; no host services, Tailscale configuration or live endpoints
+were changed. At this stage the delta was left uncommitted for independent review;
+that review and the later local-commit approval are recorded below. No push, tag
+or publication.
+
+### Pre-commit documentation review and in-process test probe
+
+Independent security/code review and a separate full-check rerun signed off the
+longpoll code. The documentation now explicitly states that the wrapper makes the
+**whole endpoint Unix-only** (including static/public/health routes), and that
+**any valid-token holder who can reach the service, including another tailnet user
+replaying through Serve, resumes the original actor regardless of current Serve
+identity**. Unix ingress is not per-poll human-identity binding.
+
+The ConnTest setup snippet was verified in an isolated consumer at
+`/tmp/ash-ts-conn-doc.eoTCUy` with its own normal test dependency `lazy_html 0.1.13`.
+That documentation-only probe did not change repository dependencies/lock or code.
+Phoenix 1.8.16 `recycle/1` and Plug 1.20.3 test dispatch preserve existing peer data;
+fresh `build_conn/0` uses TCP-shaped peer data, and default recycling drops
+canonical assertion headers. Applying `ensure_recycled/1` before test peer/header
+setup works for initial and subsequent HTTP renders. Unprepared test conns get
+403 even for static assets/public health routes. These are simulated adapter tests,
+not additional real network-isolation evidence.
+
+**Discovery leading to the reviewed fix below:** ordinary connected LiveViewTest
+`live/2` and GET followed by `live/1` initially failed with `FunctionClauseError`
+in `Phoenix.LiveView.conn_connect_info/2` for `:session`. The default connect-info
+is a `Plug.Conn`; the public accessor does not support `:session`. The library's
+redundant mount lookup was wrong, not a missing `lazy_html` installation. LiveView
+1.2.13 has no public `put_connect_info/2` API; its private override was not used.
+At that stage the guide documented the failure rather than claiming a working
+connected recipe. Architecture review then approved removing the redundant lookup
+while keeping session/CSRF at the mandatory custom socket gate.
+
+Both supported toolchains ran six isolated checks: four passing HTTP/recycling
+cases plus two tests **confirming the expected connected LiveViewTest failures**,
+not six successful LiveView integrations. Logs:
+`/tmp/ash-ts-conn-doc-final-1.20.log` and `/tmp/ash-ts-conn-doc-final-1.18.log`.
+The initial failed probe is `/tmp/ash-ts-conn-doc-1.20.log`. Existing real-wire
+coverage remains valid; real Serve/browser/TLS gates remain open. No commits were
+made during that probe.
+
+### Reviewed standard LiveViewTest compatibility fix
+
+An isolated minimal spike at `/tmp/ash-ts-lvtest-spike.v51pOy/project` passed both
+toolchains before repository changes were authorized. The runtime delta deletes
+only the mount `valid_session?/1` clause/helper (six lines). The required custom
+socket still rejects missing/nil/nonmap sessions and validates marker/Unix peer/
+assertions before any channel opens. Phoenix's normal transport session/CSRF
+validation remains enabled. Mounts still clear stale actors and independently
+validate root topology, integration marker, actual peer and canonical assertions;
+they now use only documented peer/header connect-info accessors. No private
+accessor/override, broad rescue, test-mode branch or framework fork was added.
+
+Owner approval authorized the normal `{:lazy_html, "~> 0.1.0", only: :test}`
+dependency for durable LiveViewTest coverage. The lock adds only `lazy_html 0.1.13`,
+`cc_precompiler 0.1.11` and `fine 0.1.6`; existing locked versions are unchanged.
+The native parser/build tooling is test-only, not a mandatory runtime requirement.
+
+Six standard LiveViewTest regressions cover ordinary `live/2`, GET then `live/1`,
+root/component actors, opaque capabilities, Ash read/create/update/destroy policies,
+predicate errors, recycled-connection identity changes and ignored cookie/page/
+params/stale-assign identity. Invalid initial peer/assertions and missing bridge
+still fail; connected mounts independently reject bad peer/headers even after a
+valid HTTP render. Expanded unit cases exercise the actual custom socket's
+invalid-session gate and prove failed mount validation clears an authorized stale
+actor and prevents an Ash read. Nested/sticky/root and absent-bridge checks remain.
+
+The guide now gives working ConnTest/LiveViewTest recipes, preserving the
+whole-endpoint Unix-only rule and explicit any-holder/original-actor bearer-token
+warning. Standard LiveViewTest does **not** establish a real transport or validate
+wire session/CSRF/Unix isolation; all existing real WebSocket/longpoll/HTTP tests
+remain. Native resumption and the unsafe shared-context invariant are unchanged.
+The initial failure evidence above is retained as discovery history, not a current
+unsupported-feature warning. Final repository validation is recorded separately
+below. That implementation stage authorized source changes and validation, not
+commits or publication; final review and local-commit approval followed.
+
+Final repository checks pass on both Elixir 1.18.4 / OTP 28.5.0.3 and Elixir 1.20.4 /
+OTP 29.1.2: **73 tests + 3 doctests**, all **94 Credo/AshCredo checks across 31
+files**, dev/test formatting, forced project warnings-as-errors compilation, docs
+warnings-as-errors, local Hex builds, and fresh HTTP-only and with-LiveView
+production consumers. Library compilation is warning-free; upstream dependency
+warnings are compiled separately. The production-with-LiveView smoke also checks
+that `LazyHTML` cannot load. Packaged requirements remain four mandatory plus the
+sole optional LiveView dependency; `lazy_html` is not a package runtime requirement.
+Actionlint and diff whitespace checks pass. The original HTTP plug, wire tests,
+Credo configuration and CI/release workflows are unchanged by this compatibility fix.
+
+Evidence: `/tmp/ash-ts-lvtest-final-1.20.log`, `/tmp/ash-ts-lvtest-final-1.18.log`,
+`/tmp/ash_tailscale-lvtest-final-1.20.tar`, `/tmp/ash_tailscale-lvtest-final-1.18.tar`.
+Fresh with-LiveView fixtures: `/tmp/ash-ts-lvtest-final-prod-1.20.uk6kox` and
+`/tmp/ash-ts-lvtest-final-prod-1.18.VuD9hH`. Final independent security/code and
+delta reviews, plus the owner's current validation rerun, passed with no actionable
+findings. The reviewed work is recorded in **focused local commits**, not published.
+Browser JS/automatic fallback, real Serve/TLS, live grant propagation and hosted
+Actions remain unvalidated; no host configuration changed.
