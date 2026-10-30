@@ -40,6 +40,7 @@ defmodule AshTailscale.MixProject do
       {:plug, "~> 1.18"},
       {:phoenix_live_view, "~> 1.2.13", optional: true},
       {:bandit, "~> 1.14.1", only: :test},
+      {:lazy_html, "~> 0.1.0", only: :test},
       {:simple_sat, "~> 0.1.4", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ash_credo, "== 0.18.0", only: [:dev, :test], runtime: false},

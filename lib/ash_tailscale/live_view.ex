@@ -65,17 +65,19 @@ defmodule AshTailscale.LiveView do
 
   Returns `{:ok, socket}` or `{:error, socket}` with `current_user` cleared on
   failure, including missing endpoint integration. Available only during root
-  mount. Both disconnected and connected
-  mounts use the same header/peer validation; connected mounts also require the
-  validated transport session. Never falls back to existing assigns or session
-  identity. Normally use `on_mount/4` instead.
+  mount. Both disconnected and connected mounts independently validate the
+  integration marker, actual peer and headers. The required consumer socket's
+  `connect/3` callback must call `connect/2`, which requires Phoenix's validated
+  session at logical transport creation. Mounts use only the documented
+  peer/header connect-info accessors.
+  Never falls back to existing assigns or session identity. Normally use
+  `on_mount/4` instead.
   """
   @spec assign_actor(map()) :: {:ok, map()} | {:error, map()}
   def assign_actor(socket) do
     socket = Phoenix.Component.assign(socket, :current_user, nil)
 
     with true <- root?(socket),
-         true <- valid_session?(socket),
          {:ok, actor} <- actor(socket.endpoint, mount_info(socket)) do
       {:ok, Phoenix.Component.assign(socket, :current_user, actor)}
     else
@@ -89,6 +91,11 @@ defmodule AshTailscale.LiveView do
 
   Run this hook after any other hook assigning `current_user`. Later hooks may
   read the actor, but no later identity/session loader may overwrite it.
+
+  Transport session/CSRF is gated by `connect/2` through the required consumer
+  socket's `connect/3` callback at logical transport creation, not this mount hook.
+  Keep that callback and Phoenix's normal checks; this hook independently validates the
+  integration marker, actual peer and assertions without rereading the session.
 
   Missing endpoint integration raises `ArgumentError`: a redirect cannot repair
   that configuration error. Invalid identity instead halts with an ordinary HTTP
@@ -114,11 +121,6 @@ defmodule AshTailscale.LiveView do
     do: not is_nil(router)
 
   defp root?(_), do: false
-
-  defp valid_session?(socket) do
-    not Phoenix.LiveView.connected?(socket) or
-      is_map(Phoenix.LiveView.get_connect_info(socket, :session))
-  end
 
   defp mount_info(socket) do
     %{

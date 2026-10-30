@@ -65,11 +65,21 @@ defmodule AshTailscale.LiveViewTest do
     for bad <- [
           Map.delete(info, :session),
           %{info | session: nil},
+          %{info | session: false},
+          %{info | session: []},
+          %{info | session: "forged"},
+          %{info | session: 42},
           Map.delete(info, :peer_data),
           %{info | x_headers: []},
           %{info | x_headers: nil}
         ] do
       assert LiveView.connect(socket, bad) == :error
+
+      assert AshTailscale.Example.Socket.connect(
+               %{},
+               %Phoenix.Socket{endpoint: LiveEndpoint},
+               bad
+             ) == :error
     end
 
     assert LiveView.connect(%{endpoint: __MODULE__}, info) == :error
@@ -118,6 +128,37 @@ defmodule AshTailscale.LiveViewTest do
         ] do
       assert {:error, failed} = LiveView.assign_actor(unsupported)
       assert failed.assigns.current_user == nil
+    end
+  end
+
+  test "connected mounts revalidate peer/assertions and clear an authorized stale actor" do
+    conn = conn([{"tailscale-user-login", "alice"}]) |> Endpoint.bridge()
+
+    actor =
+      AshTailscale.test_actor!("stale", %{"example.com/cap/reports" => [%{"actions" => ["read"]}]})
+
+    assert {:ok, _} = Ash.read(Report, actor: actor)
+
+    for connect_info <- [
+          conn,
+          Map.delete(info(conn), :session)
+        ] do
+      connected = %{socket(connect_info) | transport_pid: self()}
+      assert {:ok, assigned} = LiveView.assign_actor(connected)
+      assert assigned.assigns.current_user.login == "alice"
+    end
+
+    for bad <- [
+          %{info(conn) | peer_data: %{address: {127, 0, 0, 1}}},
+          %{info(conn) | x_headers: []},
+          %{info(conn) | x_headers: [{"x-ash-tailscale-tailscale-user-login", ""}]}
+        ] do
+      connected = bad |> socket() |> Phoenix.Component.assign(:current_user, actor)
+      assert {:error, cleared} = LiveView.assign_actor(connected)
+      assert cleared.assigns.current_user == nil
+
+      assert {:error, %Ash.Error.Forbidden{}} =
+               Ash.read(Report, actor: cleared.assigns.current_user)
     end
   end
 
