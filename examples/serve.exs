@@ -19,8 +19,15 @@ Application.put_env(
   AshTailscale.Example.config(socket, host, secret)
 )
 
-{:ok, _} = Phoenix.PubSub.start_link(name: AshTailscale.Example.PubSub)
-{:ok, _} = AshTailscale.Example.Endpoint.start_link()
+{:ok, _} =
+  Supervisor.start_link(
+    [
+      {Phoenix.PubSub, name: AshTailscale.Example.PubSub},
+      AshTailscale.Example.Endpoint
+    ],
+    strategy: :one_for_one
+  )
+
 {:ok, {:local, ^socket}} = Bandit.PhoenixAdapter.server_info(AshTailscale.Example.Endpoint, :http)
 File.chmod!(socket, 0o600)
 # Keep the endpoint's parent alive; a consumer supervises it in its application.
