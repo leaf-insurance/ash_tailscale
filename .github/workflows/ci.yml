@@ -88,3 +88,5 @@ jobs:
         run: mix docs --warnings-as-errors
       - name: Build package locally (never publish)
         run: mix hex.build --output "$RUNNER_TEMP/ash_tailscale.tar"
+      - name: Fresh HTTP-only production consumer (no Phoenix or LiveView)
+        run: bash test/http_only.sh

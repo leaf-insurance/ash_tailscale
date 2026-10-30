@@ -22,6 +22,8 @@ defmodule AshTailscale.MixProject do
       ],
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
+      # A separate Mix project exercised by test/http_only.sh, not an ExUnit test.
+      test_ignore_filters: [~r"test/fixtures/http_only/mix\.exs$"],
       elixirc_paths:
         if(Mix.env() == :test, do: ["lib", "test/support", "examples"], else: ["lib"]),
       deps: deps()
