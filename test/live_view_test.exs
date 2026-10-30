@@ -45,6 +45,9 @@ defmodule AshTailscale.LiveViewTest do
         |> Map.put(:remote_ip, {:local, "fake"})
         |> Endpoint.bridge()
 
+      assert conn.halted
+      assert conn.status == 403
+      assert conn.resp_body == "Forbidden"
       assert Endpoint.canonical_headers(conn.req_headers) == []
       assert :error == LiveView.connect(%{endpoint: LiveEndpoint}, info(conn))
 

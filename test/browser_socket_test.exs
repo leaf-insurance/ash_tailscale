@@ -218,9 +218,11 @@ defmodule AshTailscale.BrowserSocketTest do
       {"forwarded", "for=unix;proto=https"}
     ]
 
+    # The optional endpoint wrapper rejects non-Unix traffic before dispatch,
+    # including token-bearing longpoll resumes. The standalone HTTP plug is unchanged.
     response = request({:tcp, port}, "GET", "/", forged)
-    assert response.status == 401
-    assert response.body == "Unauthorized"
+    assert response.status == 403
+    assert response.body == "Forbidden"
 
     response =
       request(
@@ -235,8 +237,8 @@ defmodule AshTailscale.BrowserSocketTest do
         "{}"
       )
 
-    assert response.status == 401
-    assert response.body == "Unauthorized"
+    assert response.status == 403
+    assert response.body == "Forbidden"
   end
 
   test "Serve-shaped null, empty and malformed entries deny writes, not authentication", %{
