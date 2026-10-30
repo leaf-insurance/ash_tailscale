@@ -11,6 +11,8 @@ defmodule AshTailscale do
   configuration, persistence, lookup, authentication tokens or session identity
   are needed. Capabilities remain opaque JSON for consumer policy predicates.
   Never serialize/cache an actor as fresh authority for a later request or job.
+  Optional `AshTailscale.LiveView` helpers use an explicitly handshake-lifetime
+  snapshot, not fresh per-event authority.
   """
 
   @typedoc "Plug-style header pairs; assertion names are case-insensitive."

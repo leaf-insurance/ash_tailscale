@@ -35,12 +35,14 @@ capabilities are permissions for that request, not permanent roles.
 
 The first release supports one topology and one integration: **Serve's HTTP proxy
 → private Unix socket → Phoenix browser routes with session/CSRF protection**.
-Browser-driven JSON requests use the same protection. Headless API integration,
-LiveView, and capability-only tagged clients are out of scope for this release.
+Browser-driven JSON requests use the same protection. Headless API integration
+and capability-only tagged clients remain out of scope.
 
-**Next milestone:** a LiveView-friendly integration, with a separately reviewed
-handshake, actor freshness and capability-revocation design. It remains unsupported
-now; the static HEEx example does not implement that lifecycle.
+**Owner-approved LiveView milestone:** optional router-mounted root LiveViews use
+the same ingress, with a required pre-dispatch bridge and independent socket/mount
+authentication. The owner chose permissions until a new actual WebSocket connection,
+not expiry. Same-transport rejoin/remount/navigation retain the snapshot; read and
+write permissions can remain stale indefinitely. See [the integration guide](live_view.md).
 
 ## What Tailscale provides
 
@@ -152,8 +154,8 @@ Its data is simply (the capability schema is illustrative only):
 }
 ```
 
-Keep only authentication provenance in namespaced transient metadata; defer
-observation timestamps until a future LiveView integration needs expiry. Do not
+Keep only authentication provenance in namespaced transient metadata. The owner
+chose handshake-lifetime LiveView permissions, with no timestamps or expiry framework. Do not
 infer an email attribute or fetch extra profile data. Normalize missing/empty
 optional fields to nil; reject a missing or empty login. Display fields never
 grant access.
@@ -307,13 +309,17 @@ an API does not protect it. Do not introduce custom `Origin` or `Sec-Fetch-Site`
 validation, a CSRF opt-out, or a headless-client bypass in v0.1. Headless API
 integration is out of scope. GET/HEAD routes must not perform mutations.
 
-**LiveView is unsupported in the first release.** Its handshake bypasses normal
-router plugs, and subsequent events have no fresh headers. Phoenix's standard
-`connect_info: [:x_headers]` does not include `Tailscale-*`. [Socket docs][phoenix]
-A future integration needs a pre-dispatch bridge that strips any client-supplied
-bridge headers, rebuilds the actor, preserves origin/CSRF checks, and enforces
-assertion expiry/revalidation. Do not add timestamps, socket helpers, or a
-cookie-only fallback now, and do not claim immediate socket policy revocation.
+LiveView's handshake bypasses normal endpoint/router plugs, and subsequent events
+have no fresh headers. Phoenix's standard `connect_info: [:x_headers]` does not
+include `Tailscale-*`. [Socket docs][phoenix] The optional integration installs a
+required pre-dispatch `call/2` wrapper, strips client-supplied bridge headers and
+copies canonical assertions only for actual Unix peers. Socket/mount validation
+requires that integration, Unix peer metadata and valid headers; origin/session
+CSRF remain enabled. No session/params/page-token identity fallback is permitted.
+The owner explicitly chose **no assertion expiry/revalidation until a new actual
+WebSocket connection**. Do not claim immediate or bounded socket policy revocation;
+components and asynchronous work using that actor have the same snapshot semantics.
+The example keeps revocation-sensitive writes on fresh CSRF-protected HTTP routes.
 
 ## Implemented slice
 
@@ -330,7 +336,8 @@ cookie-only fallback now, and do not claim immediate socket policy revocation.
    capability schema. `AshTailscale.test_actor!/2` supports policy tests.
 4. **Phoenix example:** `examples/browser.ex`, `examples/reports.ex` and the local
    launcher `examples/serve.exs` provide one tested session/CSRF/socket recipe,
-   without a user database or LiveView integration.
+   without a user database. The optional `examples/live_view.ex` adds root LiveView
+   reads using the handshake snapshot, keeping writes on the original HTTP routes.
 
 Test malformed/Unicode/split-word headers, missing/empty login, empty optional
 profile values, absent/null capabilities, arbitrary nested JSON preservation,

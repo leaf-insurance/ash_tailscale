@@ -17,16 +17,17 @@ user-reported live deployment:
 | Ash / Ash Authentication | 3.37.2 / 4.15.0 |
 | Plug / Jason | 1.20.3 / 1.4.5 |
 | Phoenix / Phoenix HTML | 1.8.16 / 4.3.0 |
-| Phoenix LiveView (static HEEx tooling only) | 1.2.13 |
+| Phoenix LiveView (optional root integration and HEEx tooling) | 1.2.13 |
 | Bandit / Thousand Island | 1.14.1 / 1.6.0 |
 | SimpleSat (example policy solver) | 0.1.4 |
 
 The package targets Elixir 1.18+ (<2.0); the exercised OTP versions are 28 and 29.
 Bandit was selected after Hex reported CVE-2026-43966 against the current
 Cowlib 2.21.0 resolved by Plug Cowboy 2.9.0. Cowboy/Cowlib are not in the final
-dependency lock. Phoenix, Phoenix HTML and Phoenix LiveView are dev/test-only for
-shared formatter imports and static HEEx rendering; this does not add LiveView
-authentication. Bandit/SimpleSat remain test-only. ExDoc is dev-only and Sourceror
+dependency lock. Phoenix LiveView is the sole **optional** dependency, providing
+Phoenix/HTML transitively for root LiveView integration and repository formatting/
+rendering. HTTP-only consumers need not install LiveView. When a consumer already
+depends on LiveView, the declared `~> 1.2.13` constraint applies. Bandit/SimpleSat remain test-only. ExDoc is dev-only and Sourceror
 dev/test-only, both runtime: false. A consumer adds its own web stack and Ash SAT
 solver.
 
@@ -166,9 +167,9 @@ made no real Serve requests and did not change tailscaled, Serve, grants or host
 services. The later operator-run live checks above are separate evidence, not
 retroactive claims about agent testing.
 
-LiveView-friendly integration is the next design milestone, but remains
-unsupported in this release. Headless APIs, tagged capability-only principals
-and session authentication are also outside this slice.
+The later owner-approved root LiveView milestone is recorded below. Headless
+APIs, tagged capability-only principals and session authentication remain outside
+this slice.
 
 ## Documentation and packaging preparation
 
@@ -180,7 +181,8 @@ actual validated tag through `ASH_TAILSCALE_SOURCE_REF`.
 The unreleased Git preview uses a committed dependency lockfile; pin the release
 and update source links when that real release exists, not with an invented tag.
 
-Consumer HexDocs navigation consists of README, setup, and public module docs.
+Consumer HexDocs navigation consists of README, setup, the optional LiveView guide,
+and public module docs.
 This record and the internal design remain repository references, not navigation
 entries. Examples/docs are included in the package; generated `doc/` output is
 ignored, not shipped. The demo and test commands are for a repository checkout.
@@ -202,7 +204,7 @@ the approved demo change: initial GET displays the assigned actor's name/login,
 automatically escaped by a static HEEx HTML module, above a separately labelled
 write/CSRF form. The controller passes the CSRF token to normal view rendering;
 identity stays in the existing connection assigns. No raw/HTML-safe escape bypass,
-live socket, mount or LiveView session is used. The current suite is
+live socket, mount or LiveView session was used at that stage. That suite was
 **36 tests + 3 doctests, zero failures**, on both recorded Elixir/OTP toolchains.
 Authentication behavior is unchanged. The example now retains Phoenix's standard
 `put_secure_browser_headers`; HTTP tests assert its CSP framing/base-URI policy,
@@ -262,9 +264,9 @@ Sourceror needed `mix deps.compile spark --force` once; fresh builds did not.
 
 ExDoc 0.40.4 built HTML/Markdown/EPUB with warnings as errors on both toolchains.
 Generated local HTML links/anchors and package contents were inspected. Local
-`hex.build` succeeded with MIT metadata and only the four existing production
-dependencies; ExDoc/Sourceror/Phoenix/HTML/LiveView are not added as production
-dependencies.
+At that stage, `hex.build` succeeded with MIT metadata and only the four existing
+production dependencies. The later LiveView milestone adds one **optional**
+LiveView requirement, not a mandatory dependency for HTTP-only consumers.
 No generated docs are tracked, and no commit, tag, push or publication was made.
 Remaining work is owner release review, selecting a real release source ref and
 performing any publication explicitly; the license choice is no longer a blocker.
@@ -287,7 +289,8 @@ No Ash/DSL false positives or check suppressions were needed. The Plug implement
 is unchanged. On Elixir 1.18.4 / OTP 28.5.0.3 and 1.20.4 / OTP 29.1.2,
 dev/test formatting and warnings-as-errors compilation, 36 tests + 3 doctests,
 docs with warnings as errors and local Hex builds passed. Packages retain only
-the four production dependencies; both lint tools are dev/test-only. Hex audit was clean.
+the four production dependencies at that stage; both lint tools are dev/test-only.
+Hex audit was clean.
 
 Actionlint 1.7.12 passed both workflows. Action commit SHAs were verified against
 official repository tags; setup-beam's Ubuntu 24.04 OTP/Elixir build listings and
@@ -299,3 +302,91 @@ build dependencies remain trusted, not isolated from that step. This is local
 validation, **not a hosted GitHub Actions
 run or publication**. Environment protection/reviewers and secrets still require
 owner setup; see [maintenance](maintenance.md).
+
+## Optional root LiveView milestone
+
+The owner chose **permissions until a new actual WebSocket connection**, with no
+TTL/expiry framework. Same-transport channel rejoin, remount, navigation and patch
+retain the original assertion. Read and write permissions can remain stale
+indefinitely, including explicitly passed component actors and asynchronous work.
+The example keeps revocation-sensitive writes on CSRF-protected HTTP routes.
+
+Installed Phoenix 1.8.16 / LiveView 1.2.13 source and upstream Serve v1.94.0 were
+reviewed before implementation. Phoenix dispatches upgrades before normal plugs;
+`:x_headers` does not include canonical Tailscale headers. The integration therefore
+installs a final endpoint `call/2`/`super` wrapper and requires its marker at socket
+and root mount validation. It strips incoming reserved-prefix headers, preserves
+canonical duplicates/values, and independently requires actual Unix peer metadata.
+The marker is a trusted-code installation invariant, not a signature. Later
+before-compile overrides/bypassing the final wrapper are unsupported; ordinary
+consumer `call/2` overrides are covered by the final wrapper and tested.
+
+The expanded suite is **53 tests + 3 doctests**, including actual Bandit Unix/TCP
+WebSocket HTTP upgrade and Phoenix channel wire messages, not just LiveViewTest:
+
+- Valid origin, session and CSRF upgrade; foreign origin, missing/forged cookie,
+  missing/bad CSRF, malformed assertions, duplicates and over-limit login/name reject.
+- Internal-prefix spoofing cannot replace canonical assertions or a missing login;
+  missing endpoint integration rejects even on Unix. Independent disconnected and
+  connected mount tests verify a clear configuration `ArgumentError` from the
+  standard hook and a cleared, non-authorizing actor from `assign_actor/1`. The
+  real unbridged dead render is generic HTTP 500, not a redirect loop; invalid
+  identity still redirects to an ordinary protected HTTP controller route.
+  Accidental TCP rejects valid
+  CSRF and forged canonical/internal/forwarded headers and `remote_ip`.
+- GET identity A / upgrade B uses B, ignoring stale assigns, cookie identity,
+  signed page-session identity and browser params. Invalid page tokens reject.
+- Real wire rejoin and live-navigation join on one transport retain read/write
+  grants; a newly opened WebSocket sees the changed identity/capabilities. These
+  assertions model proxy headers; no real grant propagation was measured.
+- Root and explicitly supplied LiveComponent actors agree, opaque nested/null JSON
+  survives, policy failures deny, and Ash read/create/update/destroy use the actor.
+  Static and connected identity rendering escape malicious text.
+- The executable example's `/live-demo`, dependency JS asset paths and real
+  connected mount pass. The original HTTP/CSRF/security-header suite still passes;
+  the example cookie contains only CSRF state. No change to `AshTailscale.Plug`.
+
+On both Elixir 1.18.4 / OTP 28.5.0.3 and Elixir 1.20.4 / OTP 29.1.2,
+formatting in dev/test, warnings-as-errors project compilation/tests, all **94
+Credo/AshCredo checks across 29 files**, docs with warnings as errors and local Hex
+builds pass. `test/http_only.sh` builds a **fresh production consumer** with its own
+dependency/build directories and no Phoenix/LiveView modules. It rejects library
+compile warnings and exercises the actor builder and HTTP plug; it passes on both
+toolchains and is included in the CI docs/package job. The separate fixture Mix
+project is explicitly ignored by ExUnit's file discovery, not by Credo.
+
+There is no compile-time LiveView `use` in the library. Plain remote calls remain
+available in the optional helper; only absent-optional-module compiler diagnostics
+are disabled when LiveView is not installed. With it installed, normal compiler
+API checks remain enabled. No conditional module/function framework or linter
+suppressions were added. Phoenix LiveView is the sole **optional** package
+requirement and supplies Phoenix/HTML transitively; the four mandatory runtime
+requirements and dependency lock are unchanged. Removing the unnecessary direct
+Phoenix/HTML declarations does not require changing the tested LiveView bound.
+Both dev/test formatter imports still work with those transitive dependencies.
+Fresh **production consumers with LiveView installed** also compile without library
+warnings on both toolchains and exercise the endpoint macro, socket validation,
+disconnected/connected mount helpers and HEEx rendering. These are compile/API
+smoke checks, not additional proxy/browser tests.
+
+Hook documentation requires running the library hook after other `current_user`
+assigners and forbids later identity/session loaders from overwriting it. The
+failure destination must be a protected ordinary HTTP controller, never another
+LiveView using the hook; the fixtures now use a dedicated controller path. Tests/workflows/build products are not shipped in the archive.
+
+Latest correction evidence: `/tmp/ash-ts-liveview-delta-1.20.log`,
+`/tmp/ash-ts-liveview-delta-1.18.log`, `/tmp/ash-ts-liveview-prod-1.20.log`,
+`/tmp/ash-ts-liveview-prod-1.18.log`, `/tmp/ash_tailscale-liveview-delta-1.20.tar`,
+and `/tmp/ash_tailscale-liveview-delta-1.18.tar`. The production-with-LiveView
+fixtures are `/tmp/ash-ts-lv-prod-120.qXMoch` and `/tmp/ash-ts-lv-prod-118.8sXnFl`.
+Earlier milestone logs remain `/tmp/ash-ts-liveview-final-1.20.log`,
+`/tmp/ash-ts-liveview-final-1.18.log`, and `/tmp/ash-ts-liveview-http-only.log`.
+Actionlint and diff whitespace checks pass. Hosted Actions have not been run.
+
+**Limits:** the wire client is not a browser; browser JS execution, actual Serve
+upgrade/header sanitization, real TLS and live grant changes/reconnects still need
+operator validation. The earlier user-reported Tailscale checks and isolated
+systemd evidence concern the HTTP/static slice, not this new integration. No host
+services, Tailscale configuration or live endpoints were changed. No new commit,
+push, tag or publication is authorized by this validation; independent review is
+still required.

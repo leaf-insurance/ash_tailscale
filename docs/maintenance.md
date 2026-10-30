@@ -24,19 +24,24 @@ MIX_ENV=test mix credo --strict
 mix test --warnings-as-errors
 mix docs --warnings-as-errors
 mix hex.build --output /tmp/ash_tailscale-check.tar
+bash test/http_only.sh
 ```
 
 Compile dependencies separately: upstream optional-tool/deprecation warnings
 are not project warnings. When switching Elixir/OTP locally, use separate
 absolute `MIX_BUILD_PATH` and compatible Hex/Rebar installations; a Hex archive
-compiled with newer Elixir can fail on the older toolchain.
+compiled with newer Elixir can fail on the older toolchain. The HTTP-only check
+uses a fresh temporary dependency/build directory (removed on exit), the repository
+lock, and the active toolchain/Hex installation. It rejects library compile warnings
+and asserts that no Phoenix/LiveView modules can load before exercising the HTTP plug.
 
 ## GitHub Actions
 
 - `.github/workflows/ci.yml`: pushes to `main`, PRs targeting `main`, and reusable
   calls. Tests/format/strict Credo run on Elixir 1.18.4 / OTP 28.5.0.3 and
   Elixir 1.20.4 / OTP 29.1.2; a dev job compiles, formats, builds docs with warnings
-  as errors and builds a local Hex archive. All use Ubuntu 24.04.
+  as errors, builds a local Hex archive, and compiles/runs a fresh HTTP-only
+  production consumer with no Phoenix/LiveView present. All use Ubuntu 24.04.
 - Dependency/build cache keys include OS/architecture, exact installed toolchain,
   Mix environment and lockfile hash. Restore prefixes never cross toolchains or
   environments; dependency fetching still checks the lock.

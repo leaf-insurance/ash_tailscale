@@ -200,8 +200,11 @@ use `AshTailscale.test_actor!/2`.
 
 Examples compile only in `MIX_ENV=test`, using disposable ETS data. Static HEEx
 shows the assigned identity with automatic escaping; the separate write/CSRF form
-is **not a login step**. `phoenix_live_view` supplies dev/test-only component and
-formatter tooling, not LiveView authentication, sockets or mounts.
+is **not a login step**. `/live-demo` adds the optional
+[LiveView read UI](live_view.md); writes still use fresh CSRF-protected HTTP
+requests. LiveView permissions are a handshake snapshot and can remain stale
+indefinitely until a new WebSocket connection. Follow the integration guide when
+adding LiveView to a consumer; the HTTP pipeline alone does not protect sockets.
 
 ```sh
 umask 0077

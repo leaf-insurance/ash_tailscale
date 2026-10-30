@@ -13,6 +13,8 @@ defmodule AshTailscale.CapabilityCheck do
   check, not a row-level ownership filter. A sole denied check returns a forbidden
   error; independent row-filter policies may instead yield empty read results.
   Do not persist an actor/capability snapshot to reuse as later authority.
+  In LiveView, repeating this check evaluates the handshake snapshot; it does not
+  refresh grants. See `AshTailscale.LiveView` for the unbounded staleness limitation.
   """
   use Ash.Policy.SimpleCheck
 

@@ -7,8 +7,10 @@ identity. The library supplies its own resource, domain and authentication strat
 you do not configure an Accounts domain or add a strategy to your user resource.
 
 **Supported:** Tailscale 1.94+ HTTP proxy → private Unix socket → Phoenix browser
-HTML/JSON routes with session/CSRF protection. No backend HTTP TCP listener, Funnel,
-LiveView, headless APIs, or optional authentication. Tagged clients have no human
+HTML/JSON routes with session/CSRF protection, plus optional
+[root LiveView integration](docs/live_view.md). LiveView permissions last until a
+new WebSocket connection and can remain stale indefinitely, for reads and writes.
+No backend HTTP TCP listener, Funnel, longpoll, headless APIs, or optional authentication. Tagged clients have no human
 login and are rejected. Identified shared-device visitors are not necessarily
 members of your tailnet.
 
@@ -138,7 +140,10 @@ Use `AshTailscale.test_actor!/2` for policy tests, and see the
 [setup/testing guide](docs/deployment.md#testing-and-troubleshooting) for in-process
 request setup and the executable repository demo. Its static HEEx page shows who
 is signed in on the initial GET, with automatic HTML escaping; the form is a
-separate write-permission/CSRF demo. This adds no LiveView authentication. The
+separate write-permission/CSRF demo. `/live-demo` adds an optional LiveView read UI
+while keeping writes on fresh CSRF-protected HTTP routes. See the
+[LiveView guide](docs/live_view.md) for the required endpoint/socket/mount wiring
+and handshake-lifetime limitations. The
 [compiled example](https://github.com/leaf-insurance/ash_tailscale/blob/main/examples/reports.ex)
 uses the same predicate/schema.
 

@@ -1,6 +1,9 @@
 defmodule AshTailscale.User do
   @moduledoc """
-  The library-owned, non-persisted Ash actor for a single request.
+  The library-owned, non-persisted Ash actor for a request or LiveView handshake.
+
+  `AshTailscale.LiveView` retains handshake-lifetime permissions until a new actual
+  WebSocket connection; reads and writes can remain stale indefinitely.
 
   Obtain one through `AshTailscale.Plug`, the trusted-server builder
   `AshTailscale.from_headers/1`, or `AshTailscale.test_actor!/2` in policy tests.
