@@ -296,6 +296,7 @@ defmodule AshTailscale.BrowserSocketTest do
     assert response.body =~ ~s(<form method="post" action="/form">)
     assert response.body =~ "/assets/phoenix/phoenix.mjs"
     assert response.body =~ "/assets/live_view/phoenix_live_view.esm.js"
+    assert response.body =~ "longPollFallbackMs: 2500"
     assert request(ctx.socket, "GET", "/assets/phoenix/phoenix.mjs").status == 200
     assert request(ctx.socket, "GET", "/assets/live_view/phoenix_live_view.esm.js").status == 200
 

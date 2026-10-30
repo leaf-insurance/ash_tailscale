@@ -117,7 +117,7 @@ defmodule AshTailscale.LiveSocketTest do
     refute event(ws, page, "write")["write"]
   end
 
-  test "actual handshake enforces origin, cookie session and CSRF; longpoll is unavailable",
+  test "actual WebSocket handshake enforces origin, cookie session and CSRF",
        ctx do
     page = page(ctx.path)
 
@@ -133,8 +133,6 @@ defmodule AshTailscale.LiveSocketTest do
       {_, response} = upgrade(ctx.path, %{page | csrf: token}, headers)
       assert response.status == 403
     end
-
-    assert Client.request(ctx.path, "/live/longpoll?vsn=2.0.0", headers()).status == 404
   end
 
   test "missing bridge fails on an actual Unix upgrade even with canonical and internal assertions",

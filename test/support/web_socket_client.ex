@@ -4,9 +4,13 @@ defmodule AshTailscale.Test.WebSocketClient do
   import Bitwise
 
   @spec request(Path.t() | {:tcp, pos_integer()}, String.t(), list()) :: map()
-  def request(address, target, headers) do
+  def request(address, target, headers), do: request(address, "GET", target, headers, "")
+
+  @spec request(Path.t() | {:tcp, pos_integer()}, String.t(), String.t(), list(), String.t()) ::
+          map()
+  def request(address, method, target, headers, body) do
     socket = open(address)
-    send_request(socket, target, [{"connection", "close"} | headers])
+    send_request(socket, target, [{"connection", "close"} | headers], method, body)
     response = response(socket)
     :gen_tcp.close(socket)
     response
@@ -106,12 +110,15 @@ defmodule AshTailscale.Test.WebSocketClient do
     socket
   end
 
-  defp send_request(socket, target, headers) do
+  defp send_request(socket, target, headers), do: send_request(socket, target, headers, "GET", "")
+
+  defp send_request(socket, target, headers, method, body) do
     :ok =
       :gen_tcp.send(socket, [
-        "GET #{target} HTTP/1.1\r\n",
+        "#{method} #{target} HTTP/1.1\r\n",
         Enum.map(headers, fn {key, value} -> "#{key}: #{value}\r\n" end),
-        "\r\n"
+        "content-length: #{byte_size(body)}\r\n\r\n",
+        body
       ])
   end
 

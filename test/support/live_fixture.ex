@@ -99,6 +99,19 @@ defmodule AshTailscale.Test.ProbeLive do
   end
 end
 
+defmodule AshTailscale.Test.ForgedRemoteIPPlug do
+  @moduledoc false
+  @behaviour Plug
+
+  @impl true
+  def init(endpoint), do: endpoint
+
+  @impl true
+  def call(conn, endpoint) do
+    endpoint.call(%{conn | remote_ip: {:local, "forged-before-endpoint"}}, endpoint.init([]))
+  end
+end
+
 defmodule AshTailscale.Test.LiveFailureController do
   @moduledoc false
   use Phoenix.Controller, formats: [:html]
@@ -145,16 +158,11 @@ defmodule AshTailscale.Test.LiveEndpoint do
   use AshTailscale.LiveView.Endpoint
   alias AshTailscale.Test.LiveFixture
 
+  @connect_info [:peer_data, :x_headers, session: {LiveFixture, :session_options, []}]
+
   socket("/live", AshTailscale.Example.Socket,
-    websocket: [
-      connect_info: [
-        :peer_data,
-        :x_headers,
-        session: {AshTailscale.Test.LiveFixture, :session_options, []}
-      ],
-      check_csrf: true
-    ],
-    longpoll: false
+    websocket: [connect_info: @connect_info],
+    longpoll: [connect_info: @connect_info, window_ms: 1000, pubsub_timeout_ms: 100]
   )
 
   plug(Plug.Session, LiveFixture.session_options())
@@ -171,15 +179,11 @@ defmodule AshTailscale.Test.UnbridgedEndpoint do
   use Phoenix.Endpoint, otp_app: :ash_tailscale
   alias AshTailscale.Test.LiveFixture
 
+  @connect_info [:peer_data, :x_headers, session: {LiveFixture, :session_options, []}]
+
   socket("/live", AshTailscale.Example.Socket,
-    websocket: [
-      connect_info: [
-        :peer_data,
-        :x_headers,
-        session: {AshTailscale.Test.LiveFixture, :session_options, []}
-      ]
-    ],
-    longpoll: false
+    websocket: [connect_info: @connect_info],
+    longpoll: [connect_info: @connect_info, window_ms: 1000, pubsub_timeout_ms: 100]
   )
 
   plug(Plug.Session, LiveFixture.session_options())

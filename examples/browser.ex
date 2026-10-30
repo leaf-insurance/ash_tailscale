@@ -88,12 +88,11 @@ defmodule AshTailscale.Example.Endpoint do
     http_only: true
   ]
 
+  @connect_info [:peer_data, :x_headers, session: @session_options]
+
   socket("/live", AshTailscale.Example.Socket,
-    websocket: [
-      connect_info: [:peer_data, :x_headers, session: @session_options],
-      check_csrf: true
-    ],
-    longpoll: false
+    websocket: [connect_info: @connect_info],
+    longpoll: [connect_info: @connect_info]
   )
 
   plug(Plug.Static, at: "/assets/phoenix", from: {:phoenix, "priv/static"})

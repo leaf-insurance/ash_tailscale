@@ -4,17 +4,26 @@ defmodule AshTailscale.LiveView do
 
   Requires `AshTailscale.LiveView.Endpoint` on the endpoint, a consumer socket
   using `Phoenix.LiveView.Socket`, and `connect_info` containing `:peer_data`,
-  `:x_headers` and the CSRF-validated `:session`. Keep origin/CSRF checks enabled
-  and disable longpoll. See the [LiveView guide](live_view.html).
+  `:x_headers` and the CSRF-validated `:session` for both WebSocket and longpoll.
+  Retain Phoenix's normal origin/session/CSRF checks and generated fallback.
+  See the [LiveView guide](live_view.html).
 
   Identity and opaque capabilities come only from canonical Serve headers via
-  the required bridge. A connected actor represents the **WebSocket handshake**,
-  not the earlier HTTP render, browser parameters, or session/page-token identity.
-  A new actual WebSocket connection refreshes it. Channel rejoin, remount and
-  live navigation on the same transport do not. Permissions for **reads and
-  writes can remain stale indefinitely**; there is no TTL or revocation watcher.
+  the required bridge. A connected actor represents the **initial logical transport**
+  (WebSocket upgrade or longpoll creation), not the earlier HTTP render, browser
+  parameters, or session/page-token identity. Only a new logical transport refreshes
+  it. Longpoll polls/pushes, channel rejoin, remount and live navigation do not.
+  There is no library TTL/revocation watcher; **read and write permissions can remain
+  stale indefinitely** on an open WebSocket. Native longpoll transport lifetimes apply.
   Components and asynchronous work using that actor have the same limitation.
   Reconnecting does not revoke other connections, actor copies or in-flight work.
+
+  Phoenix's opaque longpoll transport token resumes existing server state without
+  rerunning connect/3 or session/CSRF extraction. Protect it as a bearer secret;
+  it is not a library identity token or a fresh Serve assertion. The required
+  endpoint wrapper enforces Unix transport on every request before dispatch. All
+  entrypoints sharing the signing/PubSub context must enforce that boundary or be
+  isolated; an unbridged shared-context entrypoint can bypass it on token resume.
 
   Pass `actor: socket.assigns.current_user` explicitly to every Ash action and
   authorize every sensitive operation. Use fresh CSRF-protected HTTP requests
@@ -38,7 +47,8 @@ defmodule AshTailscale.LiveView do
       def connect(_params, socket, info), do: AshTailscale.LiveView.connect(socket, info)
 
   The consumer uses `Phoenix.LiveView.Socket`, which preserves connect info for
-  the mount helper. No identity is stored in socket params or cookie sessions.
+  the mount helper. Runs on new WebSocket/longpoll transports, not resumed polls.
+  No identity is stored in socket params or cookie sessions.
   """
   @spec connect(map(), map()) :: {:ok, map()} | :error
   def connect(%{endpoint: endpoint} = socket, %{session: session} = info) when is_map(session) do

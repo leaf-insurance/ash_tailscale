@@ -25,8 +25,10 @@ defmodule AshTailscale.Example.LiveLayout do
           import {Socket} from "/assets/phoenix/phoenix.mjs"
           import {LiveSocket} from "/assets/live_view/phoenix_live_view.esm.js"
           const csrfToken = document.querySelector("meta[name='csrf-token']").content
-          // No longPollFallbackMs: this integration supports WebSockets only.
-          const liveSocket = new LiveSocket("/live", Socket, {params: {_csrf_token: csrfToken}})
+          const liveSocket = new LiveSocket("/live", Socket, {
+            longPollFallbackMs: 2500,
+            params: {_csrf_token: csrfToken}
+          })
           liveSocket.connect()
         </script>
       </head>
@@ -59,8 +61,8 @@ defmodule AshTailscale.Example.ReportLive do
     ~H"""
     <h1>LiveView: handshake-lifetime permissions</h1>
     <p id="live-login">Signed in as: {@current_user.name || @current_user.login}</p>
-    <p>Read and write permissions can remain stale indefinitely until a new WebSocket connection.</p>
-    <p>Channel rejoin, remount and live navigation do not refresh permissions.</p>
+    <p>Permissions belong to the original logical transport and can remain stale indefinitely.</p>
+    <p>Longpoll polls, channel rejoin, remount and live navigation do not refresh permissions.</p>
     <p id="read-result">{@read_result}</p>
     <button phx-click="read">Read with the handshake actor</button>
     <.link navigate="/live-other">Live navigation (same handshake)</.link>
