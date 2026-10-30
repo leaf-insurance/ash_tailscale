@@ -1,0 +1,131 @@
+defmodule AshTailscale.LiveView do
+  @moduledoc """
+  Optional authentication for router-mounted root LiveViews.
+
+  Requires `AshTailscale.LiveView.Endpoint` on the endpoint, a consumer socket
+  using `Phoenix.LiveView.Socket`, and `connect_info` containing `:peer_data`,
+  `:x_headers` and the CSRF-validated `:session`. Keep origin/CSRF checks enabled
+  and disable longpoll. See the [LiveView guide](live_view.html).
+
+  Identity and opaque capabilities come only from canonical Serve headers via
+  the required bridge. A connected actor represents the **WebSocket handshake**,
+  not the earlier HTTP render, browser parameters, or session/page-token identity.
+  A new actual WebSocket connection refreshes it. Channel rejoin, remount and
+  live navigation on the same transport do not. Permissions for **reads and
+  writes can remain stale indefinitely**; there is no TTL or revocation watcher.
+  Components and asynchronous work using that actor have the same limitation.
+  Reconnecting does not revoke other connections, actor copies or in-flight work.
+
+  Pass `actor: socket.assigns.current_user` explicitly to every Ash action and
+  authorize every sensitive operation. Use fresh CSRF-protected HTTP requests
+  when handshake-lifetime authorization is unsuitable. Nested/sticky LiveViews
+  are not supported; LiveComponents may receive the root actor explicitly.
+
+  Phoenix LiveView is optional. HTTP-only consumers need not install it.
+  """
+
+  # Keep the module available without the optional web stack. When installed,
+  # normal compiler checks still validate all remote calls against its API.
+  unless Code.ensure_loaded?(Phoenix.LiveView) do
+    @compile {:no_warn_undefined, [Phoenix.Component, Phoenix.LiveView]}
+  end
+
+  alias AshTailscale.LiveView.Endpoint
+
+  @doc """
+  Validates a consumer socket connection; returns `{:ok, socket}` or `:error`.
+
+      def connect(_params, socket, info), do: AshTailscale.LiveView.connect(socket, info)
+
+  The consumer uses `Phoenix.LiveView.Socket`, which preserves connect info for
+  the mount helper. No identity is stored in socket params or cookie sessions.
+  """
+  @spec connect(map(), map()) :: {:ok, map()} | :error
+  def connect(%{endpoint: endpoint} = socket, %{session: session} = info) when is_map(session) do
+    case actor(endpoint, info) do
+      {:ok, _actor} -> {:ok, socket}
+      :error -> :error
+    end
+  end
+
+  def connect(_socket, _info), do: :error
+
+  @doc """
+  Replaces `current_user` from root mount connect info.
+
+  Returns `{:ok, socket}` or `{:error, socket}` with `current_user` cleared on
+  failure, including missing endpoint integration. Available only during root
+  mount. Both disconnected and connected
+  mounts use the same header/peer validation; connected mounts also require the
+  validated transport session. Never falls back to existing assigns or session
+  identity. Normally use `on_mount/4` instead.
+  """
+  @spec assign_actor(map()) :: {:ok, map()} | {:error, map()}
+  def assign_actor(socket) do
+    socket = Phoenix.Component.assign(socket, :current_user, nil)
+
+    with true <- root?(socket),
+         true <- valid_session?(socket),
+         {:ok, actor} <- actor(socket.endpoint, mount_info(socket)) do
+      {:ok, Phoenix.Component.assign(socket, :current_user, actor)}
+    else
+      _ -> {:error, socket}
+    end
+  end
+
+  @doc """
+  Required root mount hook. The hook argument is an application-chosen local
+  HTTP failure path, e.g. `on_mount: [{AshTailscale.LiveView, "/"}]`.
+
+  Run this hook after any other hook assigning `current_user`. Later hooks may
+  read the actor, but no later identity/session loader may overwrite it.
+
+  Missing endpoint integration raises `ArgumentError`: a redirect cannot repair
+  that configuration error. Invalid identity instead halts with an ordinary HTTP
+  redirect (not live navigation). Choose a protected HTTP **controller** route,
+  not another LiveView using this hook. `AshTailscale.Plug` returns generic 401 if
+  the new HTTP request is unauthenticated. No login page or session identity is needed.
+  """
+  @spec on_mount(String.t(), map(), map(), map()) :: {:cont, map()} | {:halt, map()}
+  def on_mount(failure_path, _params, _session, socket) when is_binary(failure_path) do
+    unless Endpoint.installed?(socket.endpoint) do
+      raise ArgumentError,
+            "AshTailscale.LiveView requires `use AshTailscale.LiveView.Endpoint` " <>
+              "after `use Phoenix.Endpoint` in #{inspect(socket.endpoint)}"
+    end
+
+    case assign_actor(socket) do
+      {:ok, socket} -> {:cont, socket}
+      {:error, socket} -> {:halt, Phoenix.LiveView.redirect(socket, to: failure_path)}
+    end
+  end
+
+  defp root?(%{parent_pid: nil, sticky?: sticky, router: router}) when sticky in [nil, false],
+    do: not is_nil(router)
+
+  defp root?(_), do: false
+
+  defp valid_session?(socket) do
+    not Phoenix.LiveView.connected?(socket) or
+      is_map(Phoenix.LiveView.get_connect_info(socket, :session))
+  end
+
+  defp mount_info(socket) do
+    %{
+      peer_data: Phoenix.LiveView.get_connect_info(socket, :peer_data),
+      x_headers: Phoenix.LiveView.get_connect_info(socket, :x_headers)
+    }
+  end
+
+  defp actor(endpoint, %{peer_data: %{address: {:local, _}}, x_headers: headers})
+       when is_list(headers) do
+    with true <- Endpoint.installed?(endpoint),
+         {:ok, actor} <- AshTailscale.from_headers(Endpoint.canonical_headers(headers)) do
+      {:ok, actor}
+    else
+      _ -> :error
+    end
+  end
+
+  defp actor(_endpoint, _info), do: :error
+end
