@@ -2,17 +2,15 @@ defmodule AshTailscale do
   @moduledoc """
   Builds transient Ash actors from Tailscale Serve header assertions.
 
-  Phoenix applications normally use `AshTailscale.Plug` after session/CSRF
-  protection. These lower-level functions are pure: they do not inspect a socket,
-  verify a signature, or establish trust. Callers must establish the private
-  Unix-socket / Serve HTTP proxy boundary themselves.
+  Start with the [LiveView setup guide](live_view.html) for an existing Phoenix
+  application. `AshTailscale.Plug` handles ordinary HTTP routes after session/CSRF
+  protection. The library supplies `AshTailscale.User` and its domain; no accounts
+  table or session identity is needed. Capabilities are opaque consumer-policy data.
 
-  The library supplies `AshTailscale.User` and its domain; no user resource
-  configuration, persistence, lookup, authentication tokens or session identity
-  are needed. Capabilities remain opaque JSON for consumer policy predicates.
-  Never serialize/cache an actor as fresh authority for a later request or job.
-  Optional `AshTailscale.LiveView` helpers use an explicitly handshake-lifetime
-  snapshot, not fresh per-event authority.
+  These lower-level functions parse assertions, not credentials: they do not
+  inspect sockets or establish trust. Require private Unix ingress from trusted
+  Serve/host processes. Never persist an actor as fresh authority for later work;
+  connected LiveView actors retain their original logical-transport snapshot.
   """
 
   @typedoc "Plug-style header pairs; assertion names are case-insensitive."

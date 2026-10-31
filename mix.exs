@@ -18,7 +18,13 @@ defmodule AshTailscale.MixProject do
       docs: [
         main: "readme",
         source_ref: System.get_env("ASH_TAILSCALE_SOURCE_REF", "main"),
-        extras: ["README.md", "docs/deployment.md", "docs/live_view.md"]
+        extras: [
+          "README.md",
+          "docs/live_view.md",
+          "docs/deployment.md",
+          "docs/testing.md",
+          "docs/systemd.md"
+        ]
       ],
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,

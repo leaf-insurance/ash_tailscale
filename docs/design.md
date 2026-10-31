@@ -276,7 +276,7 @@ capability-only callers can be a separate follow-up; do not fabricate a user.
    Path=/ and no Domain. Ordinary SameSite=Lax/host-only cookies do not prevent a
    sibling tailnet host from tossing a domain cookie containing an attacker's
    valid CSRF session/token, while Serve attaches the victim's ambient identity.
-   See [browser setup](deployment.md#2-endpoint-session-and-csrf) and
+   See [browser setup](live_view.md#1-endpoint) and
    [the scope of reported browser checks](validation.md#user-reported-manual-live-smoke-checks).
    Require Phoenix's
    standard CSRF protection on every authenticated browser route, including JSON

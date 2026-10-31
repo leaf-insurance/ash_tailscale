@@ -1,36 +1,22 @@
 defmodule AshTailscale.LiveView do
   @moduledoc """
-  Optional authentication for router-mounted root LiveViews.
+  Authentication for router-mounted root LiveViews. Follow the
+  [LiveView setup guide](live_view.html) for the required endpoint bridge, custom
+  socket, matching transport connect info, HTTP plug and root mount hook.
 
-  Requires `AshTailscale.LiveView.Endpoint` on the endpoint, a consumer socket
-  using `Phoenix.LiveView.Socket`, and `connect_info` containing `:peer_data`,
-  `:x_headers` and the CSRF-validated `:session` for both WebSocket and longpoll.
-  Retain Phoenix's normal origin/session/CSRF checks and generated fallback.
-  See the [LiveView guide](live_view.html).
+  Pass `actor: socket.assigns.current_user` to every Ash operation. Components may
+  receive the root actor explicitly; nested/sticky LiveViews are unsupported.
+  Permissions belong to the initial logical transport, not each poll, rejoin or
+  navigation. They may stay stale indefinitely; use fresh CSRF-protected HTTP when
+  current grants are required. Reconnecting does not revoke old actors or work.
 
-  Identity and opaque capabilities come only from canonical Serve headers via
-  the required bridge. A connected actor represents the **initial logical transport**
-  (WebSocket upgrade or longpoll creation), not the earlier HTTP render, browser
-  parameters, or session/page-token identity. Only a new logical transport refreshes
-  it. Longpoll polls/pushes, channel rejoin, remount and live navigation do not.
-  There is no library TTL/revocation watcher; **read and write permissions can remain
-  stale indefinitely** on an open WebSocket. Native longpoll transport lifetimes apply.
-  Components and asynchronous work using that actor have the same limitation.
-  Reconnecting does not revoke other connections, actor copies or in-flight work.
+  Native longpoll tokens are bearer secrets: any holder reaching the service can
+  resume the original actor without fresh identity/session authentication. Every
+  entrypoint sharing signing keys/PubSub must enforce the Unix boundary or isolate
+  that context. Keep normal Phoenix origin/CSRF checks; the mount hook does not
+  replace the required socket callback.
 
-  Phoenix's opaque longpoll transport token resumes existing server state without
-  rerunning connect/3 or session/CSRF extraction. Protect it as a bearer secret;
-  it is not a library identity token or a fresh Serve assertion. The required
-  endpoint wrapper enforces Unix transport on every request before dispatch. All
-  entrypoints sharing the signing/PubSub context must enforce that boundary or be
-  isolated; an unbridged shared-context entrypoint can bypass it on token resume.
-
-  Pass `actor: socket.assigns.current_user` explicitly to every Ash action and
-  authorize every sensitive operation. Use fresh CSRF-protected HTTP requests
-  when handshake-lifetime authorization is unsuitable. Nested/sticky LiveViews
-  are not supported; LiveComponents may receive the root actor explicitly.
-
-  Phoenix LiveView is optional. HTTP-only consumers need not install it.
+  LiveView remains an optional package dependency; HTTP-only apps may omit it.
   """
 
   # Keep the module available without the optional web stack. When installed,
