@@ -224,5 +224,6 @@ The launcher checks ownership/mode and the bound Unix listener, refusing an
 existing socket. It does not configure grants/Serve; an operator must point Serve
 at this demo's path separately. Remove its directory only after stopping it.
 `mix test` runs the local suite. [Maintainer validation](https://github.com/leaf-insurance/ash_tailscale/blob/main/docs/validation.md)
-records user-reported live checks and limits, including no full two-user
-cookie-tossing simulation or named browser/version matrix.
+records real-Serve wire checks and operator observations in one named Firefox
+environment, with limits: no broad browser/version matrix or full two-user
+cookie-tossing simulation.

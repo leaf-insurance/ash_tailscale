@@ -4,6 +4,8 @@ This is maintainer evidence, not the consumer setup guide or a promise of genera
 production readiness. Start with [README](../README.md) and [setup](deployment.md).
 The internal [design](design.md) retains research references and scope decisions.
 [Maintainer commands and workflows](maintenance.md) cover local checks and release gates.
+Earlier milestone limits below are historical. The latest scoped evidence is in
+[real Serve HTTPS and operator browser validation](#real-serve-https-and-operator-browser-validation).
 
 ## Compatibility decisions
 
@@ -127,7 +129,8 @@ yamerl; a clean absolute build succeeded.
 **Agreed manual smoke checklist: passed for the user's tested setup, as reported
 by the user.** These later checks ran on the operator's own server/tailnet and were
 not directly observed by the implementation or orchestration agents. No exact
-browser/server version matrix was supplied.
+browser/server version matrix was supplied for this earlier HTTP/static slice;
+the later Docker/LiveView deployment is recorded separately below.
 
 Reported results:
 - **Human identity and current grants:** a browser on a user-owned client
@@ -156,9 +159,9 @@ Reported results:
 The reviewed public suffix list includes `ts.net` and `*.c.ts.net`, not every
 tailnet suffix; same-site sibling hosts motivate the cookie-tossing defense.
 The cookie check validates real-browser prefix enforcement/configuration only,
-**not a complete two-user privilege-escalation attack simulation**. The named
-browser/version matrix, broader server/platform coverage and tagged-client native
-DNS remain gaps. New environments must rerun the smoke checks, including their
+**not a complete two-user privilege-escalation attack simulation**. These earlier
+reports did not supply a named browser/version matrix or validate tagged-client
+native DNS. Broader server/platform coverage remains a gap. New environments must rerun the smoke checks, including their
 socket/daemon permissions and browser behavior; these reports are not a general
 production-readiness guarantee. No package publication or release tag is implied.
 
@@ -382,16 +385,17 @@ and `/tmp/ash_tailscale-liveview-delta-1.18.tar`. The production-with-LiveView
 fixtures are `/tmp/ash-ts-lv-prod-120.qXMoch` and `/tmp/ash-ts-lv-prod-118.8sXnFl`.
 Earlier milestone logs remain `/tmp/ash-ts-liveview-final-1.20.log`,
 `/tmp/ash-ts-liveview-final-1.18.log`, and `/tmp/ash-ts-liveview-http-only.log`.
-Actionlint and diff whitespace checks pass. Hosted Actions have not been run.
+Actionlint and diff whitespace checks passed. Hosted Actions had not been run
+at this milestone; a later hosted result is recorded below.
 
-**Limits:** the wire client is not a browser; browser JS execution, actual Serve
-upgrade/header sanitization, real TLS and live grant changes/reconnects still need
-operator validation. The earlier user-reported Tailscale checks and isolated
+**Limits at this milestone:** the wire client is not a browser; browser JS execution,
+actual Serve upgrade/header sanitization, real TLS and live grant changes/reconnects
+had not yet been validated. Later live evidence is recorded below. The earlier user-reported Tailscale checks and isolated
 systemd evidence concern the HTTP/static slice, not this new integration. No host
 services, Tailscale configuration or live endpoints were changed. That milestone
 was subsequently reviewed and committed through `f72a0c8`; the longpoll and
 compatibility follow-ups received separate review, recorded below. No push, tag
-or publication has been authorized.
+or publication was authorized at that milestone.
 
 ## Native longpoll fallback extension
 
@@ -473,8 +477,9 @@ Evidence: `/tmp/ash-ts-longpoll-1.20.log`, `/tmp/ash-ts-longpoll-1.18.log`,
 Fresh with-LiveView fixtures: `/tmp/ash-ts-longpoll-prod-1.20.VjFtKb` and
 `/tmp/ash-ts-longpoll-prod-1.18.44e6Xq`.
 
-**Still not validated:** browser JS execution/automatic fallback, real Serve/TLS,
-live grant propagation or a new systemd deployment. Headers are simulated over real
+**Not validated at that stage:** browser JS execution/automatic fallback, real
+Serve/TLS, live grant propagation or a new systemd deployment. The later Docker
+live run below adds scoped evidence, not a new systemd deployment. Headers are simulated over real
 local wire transports; no host services, Tailscale configuration or live endpoints
 were changed. At this stage the delta was left uncommitted for independent review;
 that review and the later local-commit approval are recorded below. No push, tag
@@ -514,8 +519,8 @@ cases plus two tests **confirming the expected connected LiveViewTest failures**
 not six successful LiveView integrations. Logs:
 `/tmp/ash-ts-conn-doc-final-1.20.log` and `/tmp/ash-ts-conn-doc-final-1.18.log`.
 The initial failed probe is `/tmp/ash-ts-conn-doc-1.20.log`. Existing real-wire
-coverage remains valid; real Serve/browser/TLS gates remain open. No commits were
-made during that probe.
+coverage remained valid; real Serve/browser/TLS gates were still open at that
+probe. No commits were made during it.
 
 ### Reviewed standard LiveViewTest compatibility fix
 
@@ -570,5 +575,125 @@ Fresh with-LiveView fixtures: `/tmp/ash-ts-lvtest-final-prod-1.20.uk6kox` and
 `/tmp/ash-ts-lvtest-final-prod-1.18.VuD9hH`. Final independent security/code and
 delta reviews, plus the owner's current validation rerun, passed with no actionable
 findings. The reviewed work is recorded in **focused local commits**, not published.
-Browser JS/automatic fallback, real Serve/TLS, live grant propagation and hosted
-Actions remain unvalidated; no host configuration changed.
+At that point browser JS/automatic fallback, real Serve/TLS, live grant propagation
+and hosted Actions remained unvalidated; no host configuration changed. Subsequent
+scoped results follow.
+
+## Real Serve HTTPS and operator browser validation
+
+### Launcher, deployment and provenance
+
+The live Docker preparation exposed an actual launcher bug: `examples/serve.exs`
+called nonexistent `Phoenix.PubSub.start_link/1`. Earlier wire tests started PubSub
+and the endpoint directly, so they did not exercise that script. Commit `1d68de3`
+uses public `Supervisor.start_link/2` with PubSub then the endpoint, preserving
+preflight/private-Unix, configuration and post-bind checks. Its regression executes
+the shipped script in a separate BEAM with owned-process cleanup; it fails with
+only the old launcher restored and passes with the fix.
+
+Both local supported toolchains passed **74 tests + 3 doctests**, **94 checks across
+31 files**, formatting, warnings-as-errors compilation/docs, package and fresh
+consumer checks. Separately, the orchestrator verified hosted GitHub Actions run
+[41053692144](https://github.com/leaf-insurance/ash_tailscale/actions/runs/41053692144)
+was **successful for `dd5125a`**. That is not hosted-CI evidence for the later
+launcher fix or these documentation changes.
+
+The Docker image was built from archived `dd5125a` plus the reviewed launcher patch;
+all 50 tracked source files were verified equivalent to `1d68de3`. It was not
+retroactively relabelled as built from a different input. This was a `MIX_ENV=test`
+example deployment, not a production release/systemd test:
+
+- Tailscale **1.104.2**, Elixir **1.18.4 / OTP 28.5.0.8**, locked Phoenix **1.8.16** /
+  LiveView **1.2.13**; verified-TLS client Python **3.14.8** / OpenSSL **3.5.9**.
+- Nonroot app, network-none, private directory **0700** / socket **0600**, runtime-only
+  private secret; userspace Tailscale in a separate container with bridge egress
+  and a read-only shared socket volume. Its sole added capability was DAC_OVERRIDE.
+  No published ports, host network/binds, TUN, NET_ADMIN, privileged mode or
+  seccomp-unconfined. Local smoke also checked unrelated-UID socket denial.
+- Owner-controlled grants and container-only Serve; no host Serve/service changes,
+  unverified-CA installation or disabled TLS verification.
+
+### Actual HTTPS wire checks: 35 granted + 35 revoked
+
+The implementation agent ran the granted phase. After the owner explicitly
+confirmed read/write actions `[]` with TCP443 retained, the orchestrator ran the
+revoked phase. **Both passed 35 checks**, using real Serve HTTPS with certificate
+and hostname verification and **TLS1.3**. The script offers only ALPN `http/1.1`
+and sends HTTP/1.1. It is not browser automation or evidence of frontend HTTP/2.
+
+| Case | Granted phase | Revoked phase |
+| --- | --- | --- |
+| Fresh HTTP page/session | 200, expected displayed identity, CSRF markup, Secure/HttpOnly `__Host-` cookie, Path=/, no Domain | Same setup; initial Read forbidden |
+| Form using fresh cookie/CSRF | 200, echoed login matches expected baseline | 403, **status only** |
+| Missing/bad form CSRF | 403 against the successful 200 control | 403, not a discriminating control in this phase |
+| Fresh WebSocket + signed-page join/read | 101, connected Read allowed | 101, connected Read forbidden |
+| Fresh native longpoll + signed-page join/read | HTTP200 / JSON410, connected Read allowed | HTTP200 / JSON410, connected Read forbidden |
+| Missing/forged cookie, missing/bad CSRF, wrong origin host/scheme/port | Seven negatives per transport: WS403; LP HTTP200 / JSON403 | Same negative statuses |
+
+Five spoof variants covered canonical login/name/profile headers, internal reserved
+identity headers, canonical capabilities, internal capabilities and combined
+identity/capabilities. Each was tested on HTTP and **fresh WS/LP connected mounts**
+from ordinary signed pages/sessions. Transport spoof headers were placed on the
+upgrade or initial LP request, not merely inferred from HTTP sanitization; later
+LP pushes/polls used the established transport. Display identity and read state
+were parsed from connected join replies, with read-event acknowledgements checked.
+
+Forged **EMPTY** capabilities did not strip actual read/write access in phase one.
+With actual grants removed, forged **FULL** capabilities did not restore connected
+WS/LP reads: **Read forbidden was directly observed**. HTTP attempts remained403,
+but their bodies were **not asserted**: this is consistent with policy denial,
+not independent discrimination from CSRF/session failure. The granted200 versus
+missing/bad-CSRF403 control establishes HTTP CSRF evidence; revoked HTTP CSRF
+cases are non-discriminating. No successful create response occurred in the
+revoked phase; storage side effects were not independently audited.
+
+The UI preserves visible name-or-login, but when the actual display name is kept,
+**hidden connected LOGIN and raw profile are not directly observed**. HTTP echoed
+login and the shared bridge support the interpretation, not direct proof of those
+hidden fields. No debug endpoint or transport/authentication bypass was added.
+
+### Operator browser reports and remaining scope
+
+Owner reports used **Firefox157.0, 64-bit, NixOS**; these are human observations,
+separate from the automated wire checks. Browser frontend HTTP version was not
+explicitly recorded, so there is no specific HTTP/2 claim.
+
+- Own displayed identity/ReadAllowed, WebSocket101 and a read click with Phoenix
+  event/read and `phx_reply` status ok frames. An acknowledgement alone is not a
+  policy result.
+- WebSocket grant removal: old transport remained Allowed; new tab/reload became
+  Forbidden. Restoration: an already-denied transport remained Denied until reload
+  became Allowed, consistent with logical-transport snapshots.
+- Orchestrator temporarily served text at `/live/websocket`, leaving the root Unix
+  proxy/capability forwarding unchanged. Owner observed failed WS attempts,
+  **automatic native-longpoll fallback**, working read clicks, retained old-poll
+  authority and fresh-transport denial after revocation. ReadForbidden was an
+  application result, not an HTTP error.
+- The temporary route was removed and Serve JSON asserted exactly equal to its
+  saved baseline. Owner confirmed a fresh private window recovered ReadAllowed
+  and WebSocket101. This does **not** complete the unconfirmed old-denied-LP-transport
+  restoration matrix or establish final grant restoration after the revoked run.
+
+Read-only evidence review signed off with the HTTP status-only and hidden-field
+limits above; no rerun was required. Tagged-client testing in **this deployment
+was intentionally deferred by owner choice**. Earlier HTTP-slice tagged-client
+reports are separate, not current-deployment evidence. No full two-user
+cookie-attack simulation, broad browser/server matrix or new systemd portability
+claim is made. Publication remains a separate gate.
+
+Sanitized scripts/results are retained under `/tmp/ash-ts-live.cteVXm`:
+`REAL_HTTPS_VALIDATION.md`, `real_https_validation.py`, `real-https-granted.json`
+and `real-https-revoked.json`. Cookies, CSRF/page/native transport tokens stayed in
+memory; no raw secret values are recorded here. Client sockets were closed and
+own LP servers left to native idle expiry. Source/library/tests were unchanged by
+live validation.
+
+**Cleanup completed (orchestrator-confirmed):** after checking the harness labels,
+the exact two containers and three named volumes (socket, app state, Tailscale
+state) were removed, the app image deleted and the harness Tailscale image alias
+removed. No harness containers, volumes or image tags remain; **both services are
+stopped**. Unrelated containers, shared/upstream images and earlier systemd/base
+caches were retained; no global prune or host service changes. Sanitized `/tmp`
+evidence remains. No logout, remote node deletion or tailnet-policy removal was
+performed by agents; the owner handles remote Tailscale cleanup. Final grant
+restoration was not confirmed and was not required for this authorized teardown.

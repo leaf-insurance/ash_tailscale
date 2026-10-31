@@ -231,6 +231,8 @@ fallback and an ordinary HTTP write form. Consumers keep their normal asset buil
 Automated tests use real Bandit Unix/TCP listeners and WebSocket/longpoll wire
 clients, including valid-token replay over accidental TCP, origin/session/CSRF,
 spoofed assertions, shared-context hazards, reconnect/rejoin semantics, policies
-and escaping. They are **not browser JS, real Serve, TLS or live grant-propagation
-tests**. Those operator checks remain open. See the repository
+and escaping. Those local tests are **not browser JS, real Serve, TLS or live
+grant-propagation tests**. Separate real-Serve HTTPS wire checks and scoped operator
+browser/fallback/grant observations are now recorded, with explicit limits; they
+do not replace validation in your deployment. See the repository
 [validation record](https://github.com/leaf-insurance/ash_tailscale/blob/main/docs/validation.md).

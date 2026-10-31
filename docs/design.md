@@ -375,13 +375,15 @@ The implemented slice uses stable Ash **3.37.2**, Ash Authentication **4.15.0**,
 Phoenix **1.8.16** and Bandit **1.14.1**. Ash Authentication Phoenix is not needed.
 The Elixir requirement is `~> 1.18`; tests passed on Elixir **1.18.4 / OTP 28.5.0.3**
 and **1.20.4 / OTP 29.1.1**. See the lockfile and [validation notes](validation.md).
-Those versions describe agent-run local tests. The user later reported successful
-live identity, grant-change, CSRF, header-spoofing, tagged-client rejection,
-socket-isolation/restart and browser cookie-prefix checks. No exact live
-browser/server version matrix was supplied. Cookie checks were not a full two-user
-attack simulation, and the tagged client's native DNS remained unvalidated.
-See [the scoped manual results](validation.md#user-reported-manual-live-smoke-checks);
-other environments must rerun them.
+Those versions describe the initial agent-run local tests. Earlier HTTP-slice
+operator reports covered identity, grants, CSRF, spoofing, tagged-client rejection,
+socket isolation/restart and cookie prefixes without an exact version matrix;
+see [their scope](validation.md#user-reported-manual-live-smoke-checks). Later
+[Docker live validation](validation.md#real-serve-https-and-operator-browser-validation)
+records verified-HTTPS wire checks and a named Firefox environment, with explicit
+observation limits. Neither is a full two-user cookie attack or broad platform
+matrix; current-deployment tagged-client testing was deferred. Other environments
+must validate their own deployment.
 
 - [Tailscale Serve: headers and security][serve]
 - [Serve capability-forwarding example][serve-example]
